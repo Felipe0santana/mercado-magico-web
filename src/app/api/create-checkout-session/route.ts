@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Stripe from 'stripe'
-import { stripeConfig, getPlanById } from '@/lib/stripe'
-import { supabase, auth } from '@/lib/supabase'
-
-const stripe = new Stripe(stripeConfig.secretKey, {
-  apiVersion: '2025-04-30.basil',
-})
+import { stripe, getPlanById } from '@/lib/stripe'
 
 export async function POST(request: NextRequest) {
   try {
+    // Verificar se o stripe está disponível (só no servidor)
+    if (!stripe) {
+      return NextResponse.json(
+        { error: 'Stripe não configurado corretamente' },
+        { status: 500 }
+      )
+    }
+
     const { priceId, planName, planPrice, userEmail } = await request.json()
 
     if (!priceId && !planPrice) {

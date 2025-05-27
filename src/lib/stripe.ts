@@ -1,14 +1,24 @@
 import Stripe from 'stripe';
 
-if (!process.env.STRIPE_SECRET_KEY) {
-  throw new Error('STRIPE_SECRET_KEY is not set');
+// Código do servidor - só executa no servidor
+let stripe: Stripe | null = null;
+
+if (typeof window === 'undefined') {
+  // Estamos no servidor
+  if (!process.env.STRIPE_SECRET_KEY) {
+    console.warn('STRIPE_SECRET_KEY is not set');
+  } else {
+    stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+      apiVersion: '2025-04-30.basil',
+    });
+  }
 }
 
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: '2025-04-30.basil',
-});
+// Exportar stripe apenas se estiver no servidor
+export { stripe };
 
-export const getStripeJs = async () => {
+// Código do cliente - só executa no browser
+export const getStripe = async () => {
   const { loadStripe } = await import('@stripe/stripe-js');
   
   if (!process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY) {
@@ -17,6 +27,9 @@ export const getStripeJs = async () => {
   
   return loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY);
 };
+
+// Alias para compatibilidade
+export const getStripeJs = getStripe;
 
 // Configuração dos planos
 export const plans = {

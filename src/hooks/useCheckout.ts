@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { getStripe } from '@/lib/stripe'
-import { useAuthState } from '@/hooks/useAuth'
 
 interface CheckoutData {
   planName: string
@@ -12,15 +11,11 @@ interface CheckoutData {
 export const useCheckout = () => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const { user, userProfile } = useAuthState()
 
   const redirectToCheckout = async ({ planName, planPrice, priceId, userEmail }: CheckoutData) => {
     try {
       setLoading(true)
       setError(null)
-
-      // Usar email do usuário logado ou email fornecido
-      const emailToUse = user?.email || userEmail
 
       // Fazer chamada para criar sessão de checkout
       const response = await fetch('/api/create-checkout-session', {
@@ -32,7 +27,7 @@ export const useCheckout = () => {
           planName,
           planPrice,
           priceId,
-          userEmail: emailToUse,
+          userEmail: userEmail || 'guest@mercadomagico.com',
         }),
       })
 
@@ -68,8 +63,8 @@ export const useCheckout = () => {
     redirectToCheckout,
     loading,
     error,
-    user,
-    userProfile,
-    isAuthenticated: !!user,
+    user: null,
+    userProfile: null,
+    isAuthenticated: false,
   }
 } 
