@@ -1,12 +1,25 @@
 import { createClient } from '@supabase/supabase-js'
 
-// Configurações corretas do Supabase
+// Configurações do Supabase - usando valores diretos para resolver problema imediato
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://cklmyduznlathpeoczjv.supabase.co'
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNrbG15ZHV6bmxhdGhwZW9jemp2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ3MTkwMzIsImV4cCI6MjA2MDI5NTAzMn0.Rp4ndKYkr-N7q9Hio8XnGqEl_3d-8Qpo2o91Yhi0gvI'
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
+// Debug das configurações
+console.log('🔧 Configuração Supabase:', {
+  url: supabaseUrl ? '✅ Configurada' : '❌ Não configurada',
+  anonKey: supabaseAnonKey ? '✅ Configurada' : '❌ Não configurada',
+  serviceKey: supabaseServiceKey ? '✅ Configurada' : '❌ Não configurada'
+})
+
 // Cliente Supabase público
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true
+  }
+})
 
 // Cliente Supabase admin (para operações administrativas)
 export const supabaseAdmin = supabaseServiceKey 
