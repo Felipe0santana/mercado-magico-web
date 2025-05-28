@@ -76,7 +76,12 @@ export function useAuth() {
         password: password,
         options: {
           data: {
-            full_name: fullName
+            full_name: fullName,
+            subscription_plan: 'free',
+            subscription_status: 'active',
+            credits_remaining: 10,
+            total_credits_purchased: 0,
+            created_at: new Date().toISOString()
           }
         }
       })
@@ -84,28 +89,6 @@ export function useAuth() {
       if (error) {
         console.error('Erro ao criar conta:', error)
         return { error }
-      }
-
-      if (data.user && !error) {
-        console.log('Usuário criado, criando perfil...')
-        
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .insert({
-            id: data.user.id,
-            email: data.user.email,
-            full_name: fullName,
-            subscription_status: 'free',
-            subscription_plan: 'free',
-            credits_remaining: 10,
-            total_credits_purchased: 0
-          })
-
-        if (profileError) {
-          console.error('Erro ao criar perfil:', profileError)
-        } else {
-          console.log('Perfil criado com sucesso')
-        }
       }
 
       console.log('Conta criada com sucesso:', data.user?.email)
