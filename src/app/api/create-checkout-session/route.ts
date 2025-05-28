@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Stripe from 'stripe'
-import { stripe, getPlanById } from '@/lib/stripe'
+import { stripe, getPlanById, plans } from '@/lib/stripe'
 
 export async function POST(request: NextRequest) {
   try {
@@ -12,55 +12,41 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { priceId, planName, planPrice, userEmail } = await request.json()
+    const { planName, userEmail } = await request.json()
 
-    if (!priceId && !planPrice) {
+    if (!planName) {
       return NextResponse.json(
-        { error: 'Price ID ou preço do plano é obrigatório' },
+        { error: 'Nome do plano é obrigatório' },
         { status: 400 }
       )
     }
 
-    // Se não tiver priceId, criar um produto e preço dinamicamente
-    let finalPriceId = priceId
-
-    if (!priceId && planPrice && planName) {
-      // Criar produto
-      const product = await stripe.products.create({
-        name: `Mercado Mágico - ${planName}`,
-        description: `Plano ${planName} do Mercado Mágico`,
-        metadata: {
-          plan: planName.toLowerCase(),
-          app: 'mercado-magico',
-        },
-      })
-
-      // Criar preço
-      const price = await stripe.prices.create({
-        unit_amount: Math.round(planPrice * 100), // Converter para centavos
-        currency: 'brl',
-        recurring: {
-          interval: 'month',
-        },
-        product: product.id,
-        metadata: {
-          plan: planName.toLowerCase(),
-          app: 'mercado-magico',
-        },
-      })
-
-      finalPriceId = price.id
+    if (!userEmail) {
+      return NextResponse.json(
+        { error: 'Email do usuário é obrigatório' },
+        { status: 400 }
+      )
     }
 
     // Obter informações do plano
-    const planInfo = getPlanById(planName?.toLowerCase() || 'unknown')
+    const planInfo = getPlanById(planName.toLowerCase())
+    
+    if (!planInfo) {
+      return NextResponse.json(
+        { error: 'Plano não encontrado' },
+        { status: 400 }
+      )
+    }
+
+    // Usar o priceId real do Stripe
+    const priceId = planInfo.priceId
 
     // Criar sessão de checkout
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card', 'pix'],
+      payment_method_types: ['card'],
       line_items: [
         {
-          price: finalPriceId,
+          price: priceId,
           quantity: 1,
         },
       ],
@@ -68,21 +54,22 @@ export async function POST(request: NextRequest) {
       success_url: `${request.headers.get('origin')}/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${request.headers.get('origin')}/`,
       metadata: {
-        plan: planName?.toLowerCase() || 'unknown',
+        plan: planName.toLowerCase(),
         app: 'mercado-magico',
-        credits: planInfo?.credits?.toString() || '0',
+        credits: planInfo.credits.toString(),
+        user_email: userEmail,
       },
       subscription_data: {
         metadata: {
-          plan: planName?.toLowerCase() || 'unknown',
+          plan: planName.toLowerCase(),
           app: 'mercado-magico',
-          credits: planInfo?.credits?.toString() || '0',
+          credits: planInfo.credits.toString(),
+          user_email: userEmail,
         },
       },
-      customer_creation: 'always',
       billing_address_collection: 'required',
       locale: 'pt-BR',
-      customer_email: userEmail || undefined,
+      customer_email: userEmail,
       allow_promotion_codes: true,
     })
 
@@ -90,15 +77,16 @@ export async function POST(request: NextRequest) {
     console.log('Sessão de checkout criada:', {
       sessionId: session.id,
       plan: planName,
-      price: planPrice,
-      userEmail: userEmail || 'não fornecido',
+      priceId: priceId,
+      userEmail: userEmail,
     })
 
     return NextResponse.json({ 
       sessionId: session.id, 
       url: session.url,
       plan: planName,
-      price: planPrice,
+      priceId: priceId,
+      userEmail: userEmail,
     })
   } catch (error) {
     console.error('Erro ao criar sessão de checkout:', error)

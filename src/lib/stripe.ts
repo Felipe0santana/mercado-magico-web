@@ -37,21 +37,24 @@ export const plans = {
     name: 'Plus',
     price: 999, // R$ 9,99 em centavos
     credits: 50,
-    priceId: 'price_plus', // Será criado dinamicamente
+    priceId: 'price_1RTQv9G8Yafp5KeiRk0WCvlH',
   },
   pro: {
     name: 'Pro',
     price: 2999, // R$ 29,99 em centavos
     credits: 200,
-    priceId: 'price_pro', // Será criado dinamicamente
+    priceId: 'price_1RTQuNG8Yafp5KeiaNXfT1Gj',
   },
   premium: {
     name: 'Premium',
     price: 9999, // R$ 99,99 em centavos
     credits: -1, // Ilimitado
-    priceId: 'price_premium', // Será criado dinamicamente
+    priceId: 'price_1RTQwUG8Yafp5Kei17h4TMo2',
   },
 };
+
+// ID do produto principal
+export const STRIPE_PRODUCT_ID = 'prod_SODLk7N90CZDcg';
 
 // Função para obter plano por ID
 export const getPlanById = (planId: string) => {

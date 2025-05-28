@@ -5,26 +5,93 @@ import { useSearchParams } from 'next/navigation'
 import { CheckCircle, Download, ArrowRight, Smartphone } from 'lucide-react'
 import Link from 'next/link'
 
+interface SessionData {
+  customer_email: string
+  amount_total: number
+  currency: string
+  metadata?: {
+    plan?: string
+    credits?: string
+  }
+  subscription?: {
+    items: {
+      data: Array<{
+        price: {
+          id: string
+          unit_amount: number
+          currency: string
+        }
+      }>
+    }
+  }
+}
+
 function SuccessContent() {
   const searchParams = useSearchParams()
   const sessionId = searchParams.get('session_id')
   const [loading, setLoading] = useState(true)
-  const [session, setSession] = useState<any>(null)
+  const [session, setSession] = useState<SessionData | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (sessionId) {
-      // Aqui você pode fazer uma chamada para verificar a sessão
-      // Por enquanto, vamos simular o sucesso
-      setTimeout(() => {
-        setSession({
-          customer_email: 'usuario@exemplo.com',
-          amount_total: 2999,
-          currency: 'brl'
-        })
-        setLoading(false)
-      }, 1000)
+      fetchSessionData(sessionId)
     }
   }, [sessionId])
+
+  const fetchSessionData = async (sessionId: string) => {
+    try {
+      const response = await fetch(`/api/checkout-session?session_id=${sessionId}`)
+      const data = await response.json()
+      
+      if (response.ok) {
+        setSession(data)
+      } else {
+        setError(data.error || 'Erro ao carregar dados da sessão')
+      }
+    } catch (err) {
+      console.error('Erro ao buscar dados da sessão:', err)
+      setError('Erro ao carregar dados da sessão')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const getPlanInfo = (planName?: string) => {
+    switch (planName?.toLowerCase()) {
+      case 'plus':
+        return {
+          name: 'Mercado Mágico Plus',
+          price: 'R$ 9,99',
+          credits: '50 créditos'
+        }
+      case 'pro':
+        return {
+          name: 'Mercado Mágico Pro',
+          price: 'R$ 29,99',
+          credits: '200 créditos'
+        }
+      case 'premium':
+        return {
+          name: 'Mercado Mágico Premium',
+          price: 'R$ 99,99',
+          credits: 'Créditos ilimitados'
+        }
+      default:
+        return {
+          name: 'Mercado Mágico',
+          price: 'R$ 0,00',
+          credits: '10 créditos'
+        }
+    }
+  }
+
+  const formatPrice = (amount: number, currency: string) => {
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: currency.toUpperCase(),
+    }).format(amount / 100)
+  }
 
   if (loading) {
     return (
@@ -36,6 +103,26 @@ function SuccessContent() {
       </div>
     )
   }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-20 h-20 bg-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
+            <span className="text-white text-2xl">!</span>
+          </div>
+          <h1 className="text-2xl font-bold text-white mb-4">Erro ao Carregar Dados</h1>
+          <p className="text-gray-400 mb-8">{error}</p>
+          <Link href="/" className="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition-colors">
+            Voltar ao Site
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  const planInfo = getPlanInfo(session?.metadata?.plan)
+  const actualPrice = session ? formatPrice(session.amount_total, session.currency) : planInfo.price
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
@@ -61,17 +148,17 @@ function SuccessContent() {
           <div className="grid md:grid-cols-2 gap-6">
             <div>
               <p className="text-gray-400 mb-2">Plano Escolhido</p>
-              <p className="text-white font-semibold text-lg">Mercado Mágico Pro</p>
+              <p className="text-white font-semibold text-lg">{planInfo.name}</p>
             </div>
             
             <div>
               <p className="text-gray-400 mb-2">Valor Mensal</p>
-              <p className="text-white font-semibold text-lg">R$ 29,99</p>
+              <p className="text-white font-semibold text-lg">{actualPrice}</p>
             </div>
             
             <div>
               <p className="text-gray-400 mb-2">Créditos Mensais</p>
-              <p className="text-white font-semibold text-lg">200 créditos</p>
+              <p className="text-white font-semibold text-lg">{planInfo.credits}</p>
             </div>
             
             <div>
@@ -93,8 +180,8 @@ function SuccessContent() {
                 <span className="text-white font-bold text-sm">1</span>
               </div>
               <div>
-                <h3 className="text-white font-semibold mb-1">Baixe o App</h3>
-                <p className="text-gray-400">Faça o download do Mercado Mágico na App Store ou Google Play</p>
+                <h3 className="text-white font-semibold mb-1">Acesse seu Perfil</h3>
+                <p className="text-gray-400">Verifique se seu plano foi ativado corretamente na área de perfil</p>
               </div>
             </div>
             
@@ -103,8 +190,8 @@ function SuccessContent() {
                 <span className="text-white font-bold text-sm">2</span>
               </div>
               <div>
-                <h3 className="text-white font-semibold mb-1">Faça Login</h3>
-                <p className="text-gray-400">Use o mesmo email da compra para acessar sua conta premium</p>
+                <h3 className="text-white font-semibold mb-1">Baixe o App</h3>
+                <p className="text-gray-400">Faça o download do Mercado Mágico na App Store ou Google Play</p>
               </div>
             </div>
             
@@ -114,7 +201,7 @@ function SuccessContent() {
               </div>
               <div>
                 <h3 className="text-white font-semibold mb-1">Comece a Usar</h3>
-                <p className="text-gray-400">Aproveite todos os recursos premium e seus 200 créditos mensais</p>
+                <p className="text-gray-400">Aproveite todos os recursos premium e seus créditos mensais</p>
               </div>
             </div>
           </div>
@@ -122,10 +209,10 @@ function SuccessContent() {
 
         {/* CTAs */}
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <button className="bg-green-600 text-white px-8 py-4 rounded-xl hover:bg-green-700 transition-all transform hover:scale-105 font-semibold text-lg flex items-center justify-center space-x-2">
-            <Smartphone className="w-5 h-5" />
-            <span>Baixar App</span>
-          </button>
+          <Link href="/profile" className="bg-green-600 text-white px-8 py-4 rounded-xl hover:bg-green-700 transition-all transform hover:scale-105 font-semibold text-lg flex items-center justify-center space-x-2">
+            <span>Ver Meu Perfil</span>
+            <ArrowRight className="w-5 h-5" />
+          </Link>
           
           <Link href="/" className="border-2 border-gray-600 text-gray-300 px-8 py-4 rounded-xl hover:bg-gray-800 transition-all font-semibold text-lg flex items-center justify-center space-x-2">
             <span>Voltar ao Site</span>

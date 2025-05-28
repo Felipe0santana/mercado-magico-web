@@ -1,8 +1,8 @@
 import { createClient } from '@supabase/supabase-js'
 
-// Configurações do Supabase (mesmo projeto do app mobile)
+// Configurações corretas do Supabase
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://cklmyduznlathpeoczjv.supabase.co'
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNrbG15ZHV6bmxhdGhwZW9jempWIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzUyODAzNywiZXhwIjoyMDUwODU2Mzd9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNrbG15ZHV6bmxhdGhwZW9jempWIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzUyODAzNywiZXhwIjoyMDUwODU2Mzd9'
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNrbG15ZHV6bmxhdGhwZW9jemp2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ3MTkwMzIsImV4cCI6MjA2MDI5NTAzMn0.Rp4ndKYkr-N7q9Hio8XnGqEl_3d-8Qpo2o91Yhi0gvI'
 
 // Cliente Supabase
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
@@ -17,6 +17,9 @@ export interface User {
   credits_remaining?: number
   created_at: string
   updated_at: string
+  full_name?: string
+  avatar_url?: string
+  total_credits_purchased?: number
 }
 
 export interface Subscription {
@@ -40,6 +43,16 @@ export interface CreditUsage {
   created_at: string
 }
 
+export interface PurchaseHistory {
+  id: string
+  user_id: string
+  shopping_list_id?: string
+  total_amount: number
+  store_name?: string
+  purchase_date: string
+  created_at: string
+}
+
 // Funções utilitárias para autenticação
 export const auth = {
   // Fazer login com email e senha
@@ -52,13 +65,13 @@ export const auth = {
   },
 
   // Registrar novo usuário
-  signUp: async (email: string, password: string, name?: string) => {
+  signUp: async (email: string, password: string, fullName?: string) => {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         data: {
-          name: name || '',
+          full_name: fullName,
         },
       },
     })
@@ -73,8 +86,8 @@ export const auth = {
 
   // Obter usuário atual
   getCurrentUser: async () => {
-    const { data: { user }, error } = await supabase.auth.getUser()
-    return { user, error }
+    const { data: { user } } = await supabase.auth.getUser()
+    return user
   },
 
   // Obter sessão atual
@@ -82,10 +95,34 @@ export const auth = {
     const { data: { session }, error } = await supabase.auth.getSession()
     return { session, error }
   },
+
+  // Resetar senha
+  resetPassword: async (email: string) => {
+    const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    })
+    return { data, error }
+  },
 }
 
 // Funções para gerenciar usuários
 export const users = {
+  // Buscar usuário por email
+  getByEmail: async (email: string) => {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .single()
+    
+    if (error) {
+      console.error('Erro ao buscar usuário:', error)
+      return null
+    }
+    
+    return data
+  },
+
   // Criar perfil de usuário
   createProfile: async (userId: string, userData: Partial<User>) => {
     const { data, error } = await supabase
@@ -120,7 +157,28 @@ export const users = {
     return { data, error }
   },
 
-  // Atualizar plano de assinatura
+  // Atualizar plano de assinatura por email
+  updatePlanByEmail: async (email: string, plan: string, credits: number) => {
+    const { data, error } = await supabase
+      .from('users')
+      .update({
+        subscription_plan: plan,
+        subscription_status: 'active',
+        credits_remaining: credits,
+        updated_at: new Date().toISOString()
+      })
+      .eq('email', email)
+      .select()
+    
+    if (error) {
+      console.error('Erro ao atualizar plano:', error)
+      return null
+    }
+    
+    return data
+  },
+
+  // Atualizar plano de assinatura por ID
   updateSubscriptionPlan: async (userId: string, plan: string, status: string) => {
     const { data, error } = await supabase
       .from('users')
@@ -146,13 +204,14 @@ export const subscriptions = {
     return { data, error }
   },
 
-  // Obter assinatura do usuário
+  // Obter assinatura por usuário
   getByUserId: async (userId: string) => {
     const { data, error } = await supabase
       .from('subscriptions')
       .select('*')
       .eq('user_id', userId)
-      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(1)
       .single()
     return { data, error }
   },
@@ -169,60 +228,66 @@ export const subscriptions = {
       .select()
     return { data, error }
   },
+}
 
-  // Cancelar assinatura
-  cancel: async (subscriptionId: string) => {
+// Funções para histórico de compras
+export const purchaseHistory = {
+  // Criar registro de compra
+  create: async (purchaseData: Omit<PurchaseHistory, 'id' | 'created_at'>) => {
     const { data, error } = await supabase
-      .from('subscriptions')
-      .update({
-        status: 'canceled',
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', subscriptionId)
+      .from('purchase_history')
+      .insert([purchaseData])
       .select()
+    return { data, error }
+  },
+
+  // Obter histórico por usuário
+  getByUserId: async (userId: string) => {
+    const { data, error } = await supabase
+      .from('purchase_history')
+      .select('*')
+      .eq('user_id', userId)
+      .order('purchase_date', { ascending: false })
     return { data, error }
   },
 }
 
-// Funções para gerenciar uso de créditos
-export const credits = {
+// Funções para uso de créditos
+export const creditUsage = {
   // Registrar uso de crédito
-  recordUsage: async (userId: string, featureType: string, creditsUsed: number = 1) => {
+  create: async (usageData: Omit<CreditUsage, 'id' | 'created_at'>) => {
     const { data, error } = await supabase
       .from('credit_usage')
-      .insert([
-        {
-          user_id: userId,
-          feature_type: featureType,
-          credits_used: creditsUsed,
-        },
-      ])
+      .insert([usageData])
       .select()
     return { data, error }
   },
 
-  // Obter uso de créditos do mês atual
-  getMonthlyUsage: async (userId: string) => {
-    const startOfMonth = new Date()
-    startOfMonth.setDate(1)
-    startOfMonth.setHours(0, 0, 0, 0)
-
+  // Obter uso por usuário
+  getByUserId: async (userId: string) => {
     const { data, error } = await supabase
       .from('credit_usage')
       .select('*')
       .eq('user_id', userId)
-      .gte('created_at', startOfMonth.toISOString())
+      .order('created_at', { ascending: false })
     return { data, error }
   },
+}
 
-  // Obter total de créditos usados no mês
-  getMonthlyTotal: async (userId: string) => {
-    const { data, error } = await credits.getMonthlyUsage(userId)
-    if (error) return { total: 0, error }
-    
-    const total = data?.reduce((sum, usage) => sum + usage.credits_used, 0) || 0
-    return { total, error: null }
-  },
+// Função para definir créditos baseado no plano
+export function getCreditsByPlan(plan: string): number {
+  switch (plan.toLowerCase()) {
+    case 'free':
+      return 10
+    case 'plus':
+      return 50
+    case 'pro':
+      return 200
+    case 'premium':
+      return -1 // ilimitado
+    default:
+      return 10
+  }
 }
 
 export default supabase 

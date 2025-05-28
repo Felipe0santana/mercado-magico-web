@@ -1,10 +1,16 @@
 'use client'
 
-import { Check, Camera, Brain, BarChart3, ShoppingCart, Smartphone, Zap, Star, Users, Shield, Clock, TrendingUp, Heart, Award, Loader2 } from 'lucide-react'
+import { useState } from 'react'
+import { Check, Camera, Brain, BarChart3, ShoppingCart, Smartphone, Zap, Star, Users, Shield, Clock, TrendingUp, Heart, Award, Loader2, LogOut, User as UserIcon } from 'lucide-react'
 import { useCheckout } from '@/hooks/useCheckout'
+import { useAuth } from '@/hooks/useAuth'
+import AuthModal from '@/components/AuthModal'
 
 export default function Home() {
   const { redirectToCheckout, loading, error } = useCheckout()
+  const { user, loading: authLoading, signOut } = useAuth()
+  const [authModalOpen, setAuthModalOpen] = useState(false)
+  const [authModalTab, setAuthModalTab] = useState<'login' | 'register'>('login')
 
   const plans = [
     {
@@ -171,10 +177,32 @@ export default function Home() {
       return
     }
 
+    // Verificar se o usuário está logado
+    if (!user) {
+      setAuthModalTab('login')
+      setAuthModalOpen(true)
+      return
+    }
+
+    // Prosseguir com o checkout
     await redirectToCheckout({
       planName: plan.name,
-      planPrice: plan.priceValue,
+      userEmail: user.email,
     })
+  }
+
+  const handleAuthSuccess = () => {
+    setAuthModalOpen(false)
+    // Aqui você pode adicionar lógica adicional após o login bem-sucedido
+  }
+
+  const handleSignOut = async () => {
+    await signOut()
+  }
+
+  const openAuthModal = (tab: 'login' | 'register') => {
+    setAuthModalTab(tab)
+    setAuthModalOpen(true)
   }
 
   return (
@@ -186,6 +214,14 @@ export default function Home() {
           <p className="text-sm opacity-90">{error}</p>
         </div>
       )}
+
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        defaultTab={authModalTab}
+        onSuccess={handleAuthSuccess}
+      />
 
       {/* Header */}
       <header className="border-b border-gray-800 bg-gray-900/95 backdrop-blur-sm sticky top-0 z-50">
@@ -207,10 +243,43 @@ export default function Home() {
               <a href="#faq" className="text-gray-300 hover:text-white transition-colors">FAQ</a>
             </nav>
             <div className="flex items-center space-x-4">
-              <button className="text-gray-300 hover:text-white transition-colors">Entrar</button>
-              <button className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition-colors font-medium">
-                Download App
-              </button>
+              {authLoading ? (
+                <div className="w-8 h-8 flex items-center justify-center">
+                  <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+                </div>
+              ) : user ? (
+                <div className="flex items-center space-x-3">
+                  <button
+                    onClick={() => window.location.href = '/profile'}
+                    className="flex items-center space-x-2 text-gray-300 hover:text-white transition-colors bg-gray-800 px-3 py-2 rounded-lg hover:bg-gray-700"
+                  >
+                    <UserIcon className="w-5 h-5" />
+                    <span className="text-sm">{user.user_metadata?.full_name || user.email}</span>
+                  </button>
+                  <button
+                    onClick={handleSignOut}
+                    className="flex items-center space-x-2 text-red-400 hover:text-red-300 transition-colors"
+                  >
+                    <LogOut className="w-5 h-5" />
+                    <span className="text-sm">Sair</span>
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <button 
+                    onClick={() => openAuthModal('login')}
+                    className="text-gray-300 hover:text-white transition-colors"
+                  >
+                    Entrar
+                  </button>
+                  <button 
+                    onClick={() => openAuthModal('register')}
+                    className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition-colors font-medium"
+                  >
+                    Criar Conta
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -387,6 +456,17 @@ export default function Home() {
           <div className="text-center mt-12">
             <p className="text-gray-400 mb-4">💳 Sistema de Créditos: 1 crédito = 1 uso de funcionalidade IA</p>
             <p className="text-sm text-gray-500">Créditos renovam mensalmente • Sem acumulação • Premium = Ilimitado</p>
+            {!user && (
+              <div className="mt-6 p-4 bg-yellow-500/20 border border-yellow-500 rounded-lg">
+                <p className="text-yellow-400 font-medium">🔒 Para assinar um plano, você precisa estar logado</p>
+                <button
+                  onClick={() => openAuthModal('register')}
+                  className="mt-2 text-green-400 hover:text-green-300 font-medium"
+                >
+                  Criar conta gratuita →
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </section>

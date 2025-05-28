@@ -3,21 +3,19 @@ import { getStripe } from '@/lib/stripe'
 
 interface CheckoutData {
   planName: string
-  planPrice: number
-  priceId?: string
   userEmail?: string
 }
 
-export const useCheckout = () => {
+export function useCheckout() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const redirectToCheckout = async ({ planName, planPrice, priceId, userEmail }: CheckoutData) => {
+  const redirectToCheckout = async ({ planName, userEmail }: CheckoutData) => {
     try {
       setLoading(true)
       setError(null)
 
-      // Fazer chamada para criar sessão de checkout
+      // Criar sessão de checkout
       const response = await fetch('/api/create-checkout-session', {
         method: 'POST',
         headers: {
@@ -25,9 +23,7 @@ export const useCheckout = () => {
         },
         body: JSON.stringify({
           planName,
-          planPrice,
-          priceId,
-          userEmail: userEmail || 'guest@mercadomagico.com',
+          userEmail,
         }),
       })
 
@@ -39,9 +35,8 @@ export const useCheckout = () => {
 
       // Redirecionar para o Stripe Checkout
       const stripe = await getStripe()
-      
       if (!stripe) {
-        throw new Error('Erro ao carregar Stripe')
+        throw new Error('Stripe não carregado')
       }
 
       const { error: stripeError } = await stripe.redirectToCheckout({
@@ -63,8 +58,5 @@ export const useCheckout = () => {
     redirectToCheckout,
     loading,
     error,
-    user: null,
-    userProfile: null,
-    isAuthenticated: false,
   }
 } 
