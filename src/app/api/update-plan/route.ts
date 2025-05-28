@@ -63,7 +63,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       message: `Plano atualizado para ${plan} com ${creditsToAdd === -1 ? 'créditos ilimitados' : creditsToAdd + ' créditos'}`,
-      user: updatedUser[0]
+      user: {
+        id: updatedUser.id,
+        email: updatedUser.email,
+        subscription_plan: updatedUser.user_metadata?.subscription_plan,
+        credits_remaining: updatedUser.user_metadata?.credits_remaining
+      }
     })
 
   } catch (error) {

@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         status: 'success',
         message: 'Usuário atualizado com sucesso',
-        user: updatedUser[0]
+        user: updatedUser?.[0] || null
       })
     }
 
