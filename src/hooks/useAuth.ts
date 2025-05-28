@@ -71,6 +71,7 @@ export function useAuth() {
       setLoading(true)
       console.log('Tentando criar conta...')
       
+      // Primeira tentativa: cadastro normal
       const { data, error } = await supabase.auth.signUp({
         email: email.trim(),
         password: password,
@@ -87,8 +88,36 @@ export function useAuth() {
       })
 
       if (error) {
-        console.error('Erro ao criar conta:', error)
-        return { error }
+        console.error('Erro de registro normal:', error)
+        
+        // Fallback: tentar via API admin
+        console.log('Tentando cadastro via API admin...')
+        try {
+          const response = await fetch('/api/create-user-admin', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              email: email.trim(),
+              password: password,
+              fullName: fullName
+            })
+          })
+          
+          const result = await response.json()
+          
+          if (result.success) {
+            console.log('Cadastro via admin bem-sucedido!')
+            return { error: null }
+          } else {
+            console.error('Erro no cadastro via admin:', result.error)
+            return { error: new Error(result.error) }
+          }
+        } catch (adminError) {
+          console.error('Erro na API admin:', adminError)
+          return { error }
+        }
       }
 
       console.log('Conta criada com sucesso:', data.user?.email)
