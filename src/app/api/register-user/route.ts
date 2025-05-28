@@ -15,25 +15,28 @@ export async function POST(request: NextRequest) {
     }
 
     // Verificar se usuário já existe
-    const { data: existingUsers, error: checkError } = await supabaseAdmin
-      .from('auth.users')
-      .select('email')
-      .eq('email', email.trim())
-
-    if (existingUsers && existingUsers.length > 0) {
+    const { data: existingUsers, error: checkError } = await supabaseAdmin.auth.admin.listUsers()
+    
+    if (existingUsers?.users?.some(user => user.email === email.trim())) {
       return NextResponse.json({ 
         success: false, 
         error: 'Este email já está em uso' 
       }, { status: 400 })
     }
 
-    // Criar usuário usando função SQL personalizada
-    const { data, error } = await supabaseAdmin
-      .rpc('create_auth_user', {
-        user_email: email.trim(),
-        user_password: password,
-        user_full_name: fullName || email.split('@')[0]
-      })
+    // Criar usuário usando método padrão do Supabase Auth
+    const { data, error } = await supabaseAdmin.auth.admin.createUser({
+      email: email.trim(),
+      password: password,
+      email_confirm: true,
+      user_metadata: {
+        full_name: fullName || email.split('@')[0],
+        subscription_plan: 'free',
+        subscription_status: 'active',
+        credits_remaining: 10,
+        total_credits_purchased: 0
+      }
+    })
 
     if (error) {
       console.error('❌ Erro ao criar usuário:', error)
@@ -44,15 +47,15 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    console.log('✅ Usuário criado com sucesso! ID:', data)
+    console.log('✅ Usuário criado com sucesso! ID:', data.user?.id)
     
     return NextResponse.json({ 
       success: true, 
       message: 'Conta criada com sucesso! Você já pode fazer login.',
       user: {
-        id: data,
-        email: email.trim(),
-        full_name: fullName
+        id: data.user?.id,
+        email: data.user?.email,
+        full_name: data.user?.user_metadata?.full_name
       }
     })
   } catch (error) {
@@ -68,6 +71,6 @@ export async function GET() {
   return NextResponse.json({ 
     message: 'API de registro de usuário',
     status: 'ativa',
-    method: 'Função SQL personalizada'
+    method: 'Supabase Auth Admin'
   })
 } 
