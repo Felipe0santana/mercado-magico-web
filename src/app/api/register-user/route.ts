@@ -14,40 +14,32 @@ export async function POST(request: NextRequest) {
       }, { status: 500 })
     }
 
-    // Verificar se usuário já existe
-    const { data: existingUsers, error: checkError } = await supabaseAdmin
-      .rpc('sql', {
-        query: `SELECT email FROM auth.users WHERE email = '${email.trim()}'`
-      })
-
-    if (existingUsers && existingUsers.length > 0) {
-      return NextResponse.json({ 
-        success: false, 
-        error: 'Email já está em uso' 
-      }, { status: 400 })
-    }
-
-    // Criar usuário via SQL direto
-    const userId = crypto.randomUUID()
-    const { error: insertError } = await supabaseAdmin.rpc('sql', {
-      query: `
-        INSERT INTO auth.users (
-          id, instance_id, email, encrypted_password, email_confirmed_at,
-          created_at, updated_at, raw_user_meta_data, aud, role
-        ) VALUES (
-          '${userId}',
-          '00000000-0000-0000-0000-000000000000',
-          '${email.trim()}',
-          crypt('${password}', gen_salt('bf')),
-          now(), now(), now(),
-          '{"full_name": "${fullName || email.split('@')[0]}", "subscription_plan": "free", "subscription_status": "active", "credits_remaining": 10}',
-          'authenticated', 'authenticated'
-        )
-      `
+    // Criar usuário via API admin
+    const { data, error } = await supabaseAdmin.auth.admin.createUser({
+      email: email.trim(),
+      password: password,
+      email_confirm: true, // Confirma email automaticamente
+      user_metadata: {
+        full_name: fullName || email.split('@')[0],
+        subscription_plan: 'free',
+        subscription_status: 'active',
+        credits_remaining: 10,
+        total_credits_purchased: 0,
+        created_at: new Date().toISOString()
+      }
     })
 
-    if (insertError) {
-      console.error('❌ Erro ao criar usuário:', insertError)
+    if (error) {
+      console.error('❌ Erro ao criar usuário:', error)
+      
+      // Se for erro de email duplicado
+      if (error.message?.includes('already registered') || error.message?.includes('already exists')) {
+        return NextResponse.json({ 
+          success: false, 
+          error: 'Este email já está em uso' 
+        }, { status: 400 })
+      }
+      
       return NextResponse.json({ 
         success: false, 
         error: 'Erro ao criar conta. Tente novamente.' 
@@ -60,8 +52,8 @@ export async function POST(request: NextRequest) {
       success: true, 
       message: 'Conta criada com sucesso! Você já pode fazer login.',
       user: {
-        id: userId,
-        email: email.trim(),
+        id: data.user?.id,
+        email: data.user?.email,
         full_name: fullName
       }
     })
