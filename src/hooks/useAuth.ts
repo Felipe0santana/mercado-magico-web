@@ -69,59 +69,30 @@ export function useAuth() {
   const signUp = async (email: string, password: string, fullName: string) => {
     try {
       setLoading(true)
-      console.log('Tentando criar conta...')
+      console.log('Criando conta via API personalizada...')
       
-      // Primeira tentativa: cadastro normal
-      const { data, error } = await supabase.auth.signUp({
-        email: email.trim(),
-        password: password,
-        options: {
-          data: {
-            full_name: fullName,
-            subscription_plan: 'free',
-            subscription_status: 'active',
-            credits_remaining: 10,
-            total_credits_purchased: 0,
-            created_at: new Date().toISOString()
-          }
-        }
+      // Usar API personalizada que funciona
+      const response = await fetch('/api/register-user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: email.trim(),
+          password: password,
+          fullName: fullName
+        })
       })
-
-      if (error) {
-        console.error('Erro de registro normal:', error)
-        
-        // Fallback: tentar via API admin
-        console.log('Tentando cadastro via API admin...')
-        try {
-          const response = await fetch('/api/create-user-admin', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              email: email.trim(),
-              password: password,
-              fullName: fullName
-            })
-          })
-          
-          const result = await response.json()
-          
-          if (result.success) {
-            console.log('Cadastro via admin bem-sucedido!')
-            return { error: null }
-          } else {
-            console.error('Erro no cadastro via admin:', result.error)
-            return { error: new Error(result.error) }
-          }
-        } catch (adminError) {
-          console.error('Erro na API admin:', adminError)
-          return { error }
-        }
+      
+      const result = await response.json()
+      
+      if (result.success) {
+        console.log('Conta criada com sucesso!')
+        return { error: null }
+      } else {
+        console.error('Erro no cadastro:', result.error)
+        return { error: new Error(result.error) }
       }
-
-      console.log('Conta criada com sucesso:', data.user?.email)
-      return { error: null }
     } catch (error) {
       console.error('Erro inesperado ao criar conta:', error)
       return { error }
