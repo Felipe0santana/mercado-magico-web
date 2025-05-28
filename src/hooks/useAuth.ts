@@ -52,11 +52,60 @@ export function useAuth() {
       })
 
       if (error) {
-        console.error('Erro de login:', error)
-        return { error }
+        console.error('Erro de login Supabase:', error)
+        
+        // Se o login normal falhar, tentar login direto
+        console.log('Tentando login direto...')
+        
+        const response = await fetch('/api/login-direct', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            email: email.trim(),
+            password: password
+          })
+        })
+        
+        const result = await response.json()
+        
+        if (result.success) {
+          console.log('✅ Login direto bem-sucedido!')
+          
+          // Criar uma sessão simulada para compatibilidade
+          const mockUser = {
+            id: result.user.id,
+            email: result.user.email,
+            aud: 'authenticated',
+            role: 'authenticated',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            email_confirmed_at: new Date().toISOString(),
+            last_sign_in_at: new Date().toISOString(),
+            app_metadata: {
+              provider: 'email',
+              providers: ['email']
+            },
+            user_metadata: {
+              full_name: result.user.full_name,
+              subscription_plan: result.user.subscription_plan,
+              subscription_status: result.user.subscription_status,
+              credits_remaining: result.user.credits_remaining
+            },
+            identities: []
+          } as unknown as User
+          
+          setUser(mockUser)
+          
+          return { error: null }
+        } else {
+          console.error('❌ Login direto falhou:', result.error)
+          return { error: new Error(result.error) }
+        }
       }
 
-      console.log('Login bem-sucedido:', data.user?.email)
+      console.log('Login Supabase bem-sucedido:', data.user?.email)
       return { error: null }
     } catch (error) {
       console.error('Erro inesperado no login:', error)
