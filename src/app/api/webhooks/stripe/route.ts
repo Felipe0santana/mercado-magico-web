@@ -91,96 +91,73 @@ export async function POST(request: NextRequest) {
 // Lidar com checkout completado
 async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   try {
-    console.log('=== 🛒 CHECKOUT COMPLETADO ===')
-    console.log('Session ID:', session.id)
-    console.log('Metadados da sessão:', session.metadata)
-    console.log('Customer email:', session.customer_details?.email)
-    console.log('Amount total:', session.amount_total)
+    console.log('🛒 Processando checkout.session.completed')
+    console.log('📧 Customer email:', session.customer_details?.email)
+    console.log('💰 Amount total:', session.amount_total)
 
     const customerEmail = session.customer_details?.email
-    const planName = session.metadata?.plan
-    const subscriptionId = session.subscription as string
-
     if (!customerEmail) {
-      console.error('❌ Email do cliente não encontrado no checkout')
+      console.error('❌ Email do cliente não encontrado na sessão')
       return
     }
 
-    if (!planName) {
-      console.error('❌ Plano não encontrado nos metadados do checkout')
+    // Determinar plano baseado no valor
+    const amountInCents = session.amount_total || 0
+    const amountInReais = amountInCents / 100
+
+    let planName = 'free'
+    let creditsToAdd = 10
+
+    if (amountInReais >= 99.99) {
+      planName = 'premium'
+      creditsToAdd = 500
+    } else if (amountInReais >= 29.99) {
+      planName = 'pro'
+      creditsToAdd = 100
+    } else if (amountInReais >= 9.99) {
+      planName = 'plus'
+      creditsToAdd = 50
+    }
+
+    console.log(`📦 Plano determinado: ${planName} com ${creditsToAdd} créditos`)
+
+    // Buscar usuário por email usando auth.users
+    const { data: authUsers, error: listError } = await supabase.auth.admin.listUsers()
+    
+    if (listError) {
+      console.error('❌ Erro ao listar usuários:', listError)
       return
     }
-
-    console.log(`🔄 Processando checkout para ${customerEmail} com plano ${planName}`)
-
-    // Definir créditos baseado no plano
-    let creditsToAdd = 10 // padrão free
-    switch (planName.toLowerCase()) {
-      case 'plus':
-        creditsToAdd = 50
-        break
-      case 'pro':
-        creditsToAdd = 200
-        break
-      case 'premium':
-        creditsToAdd = -1 // ilimitado
-        break
-    }
-
-    console.log(`💳 Créditos a serem adicionados: ${creditsToAdd}`)
-
-    // Testar conexão com Supabase
-    console.log('🔗 Testando conexão com Supabase...')
-    const { data: testConnection, error: connectionError } = await supabase
-      .from('users')
-      .select('count')
-      .limit(1)
-
-    if (connectionError) {
-      console.error('❌ Erro de conexão com Supabase:', connectionError)
-      return
-    }
-
-    console.log('✅ Conexão com Supabase estabelecida')
-
-    // Buscar usuário existente no Supabase
-    console.log(`🔍 Buscando usuário: ${customerEmail}`)
-    const { data: existingUser, error: userSearchError } = await supabase
-      .from('users')
-      .select('id, email, subscription_plan, credits_remaining')
-      .eq('email', customerEmail)
-      .single()
-
-    if (userSearchError && userSearchError.code !== 'PGRST116') {
-      console.error('❌ Erro ao buscar usuário:', userSearchError)
-      return
-    }
-
+    
+    const user = authUsers?.users?.find(u => u.email === customerEmail)
     let userId: string
 
-    if (existingUser) {
-      userId = existingUser.id
-      console.log(`✅ Usuário existente encontrado: ${userId}`)
-      console.log(`📊 Plano atual: ${existingUser.subscription_plan}, Créditos atuais: ${existingUser.credits_remaining}`)
-      
-      // Atualizar plano do usuário existente
-      console.log(`🔄 Atualizando plano para ${planName}...`)
-      const { error: updateError } = await supabase
-        .from('users')
-        .update({
-          subscription_plan: planName,
-          subscription_status: 'active',
-          credits_remaining: creditsToAdd,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', userId)
+    if (user) {
+      console.log(`✅ Usuário encontrado: ${customerEmail}`)
+      userId = user.id
+
+      // Atualizar user_metadata do usuário existente
+      const currentMetadata = user.user_metadata || {}
+      const newMetadata = {
+        ...currentMetadata,
+        subscription_plan: planName,
+        subscription_status: 'active',
+        credits_remaining: creditsToAdd,
+        total_credits_purchased: (currentMetadata.total_credits_purchased || 0) + creditsToAdd,
+        last_purchase_date: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+
+      const { data: updatedUser, error: updateError } = await supabase.auth.admin.updateUserById(userId, {
+        user_metadata: newMetadata
+      })
 
       if (updateError) {
-        console.error('❌ Erro ao atualizar usuário existente:', updateError)
+        console.error('❌ Erro ao atualizar usuário:', updateError)
         return
       }
 
-      console.log(`✅ Plano do usuário ${customerEmail} atualizado para ${planName} com ${creditsToAdd} créditos`)
+      console.log(`✅ Usuário ${customerEmail} atualizado para plano ${planName} com ${creditsToAdd} créditos`)
     } else {
       console.log('🆕 Usuário não encontrado, criando novo usuário')
       
@@ -188,6 +165,15 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       const { data: newUser, error: userError } = await supabase.auth.admin.createUser({
         email: customerEmail,
         email_confirm: true,
+        user_metadata: {
+          subscription_plan: planName,
+          subscription_status: 'active',
+          credits_remaining: creditsToAdd,
+          total_credits_purchased: creditsToAdd,
+          last_purchase_date: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }
       })
 
       if (userError || !newUser.user) {
@@ -196,73 +182,34 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       }
 
       userId = newUser.user.id
-
-      // Criar perfil do usuário na tabela users
-      const { error: profileError } = await supabase
-        .from('users')
-        .insert({
-          id: userId,
-          email: customerEmail,
-          subscription_plan: planName,
-          subscription_status: 'active',
-          credits_remaining: creditsToAdd,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        })
-
-      if (profileError) {
-        console.error('❌ Erro ao criar perfil do usuário:', profileError)
-        return
-      }
-
       console.log(`✅ Novo usuário criado: ${customerEmail} com plano ${planName} e ${creditsToAdd} créditos`)
     }
 
-    // Se houver subscription_id, criar registro na tabela subscriptions
-    if (subscriptionId) {
-      console.log('📝 Criando registro de assinatura...')
+    // Criar registro de assinatura (opcional, para histórico)
+    if (session.subscription) {
       const { error: subscriptionError } = await supabase
         .from('subscriptions')
-        .upsert({
+        .insert({
           user_id: userId,
-          plan: planName as any,
-          status: 'active',
-          stripe_subscription_id: subscriptionId,
+          stripe_subscription_id: session.subscription as string,
           stripe_customer_id: session.customer as string,
+          status: 'active',
+          plan: planName,
           current_period_start: new Date().toISOString(),
-          current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 dias
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         })
 
       if (subscriptionError) {
-        console.error('❌ Erro ao criar/atualizar assinatura:', subscriptionError)
+        console.error('❌ Erro ao criar registro de assinatura:', subscriptionError)
       } else {
-        console.log(`✅ Assinatura criada/atualizada para ${customerEmail}`)
+        console.log('✅ Registro de assinatura criado')
       }
     }
 
-    // Criar registro de transação de crédito
-    console.log('💰 Criando registro de compra...')
-    const { error: transactionError } = await supabase
-      .from('purchase_history')
-      .insert({
-        user_id: userId,
-        total_amount: (session.amount_total || 0) / 100, // converter de centavos para reais
-        store_name: `Mercado Mágico - Plano ${planName}`,
-        purchase_date: new Date().toISOString()
-      })
-
-    if (transactionError) {
-      console.error('❌ Erro ao criar registro de compra:', transactionError)
-    } else {
-      console.log(`✅ Registro de compra criado para ${customerEmail}`)
-    }
-
-    console.log(`🎉 Checkout processado com sucesso para ${customerEmail}`)
-    console.log('=== ✅ FIM DO PROCESSAMENTO ===')
   } catch (error) {
-    console.error('❌ Erro ao processar checkout completado:', error)
+    console.error('❌ Erro ao processar checkout completed:', error)
   }
 }
 

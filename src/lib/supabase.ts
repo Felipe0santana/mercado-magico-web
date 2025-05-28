@@ -105,92 +105,197 @@ export const auth = {
   },
 }
 
-// Funções para gerenciar usuários
+// Funções para gerenciar usuários usando apenas auth.users
 export const users = {
-  // Buscar usuário por email
+  // Buscar usuário por email usando auth.users
   getByEmail: async (email: string) => {
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', email)
-      .single()
-    
-    if (error) {
-      console.error('Erro ao buscar usuário:', error)
+    try {
+      const { data: authUsers, error } = await supabase.auth.admin.listUsers()
+      
+      if (error) {
+        console.error('Erro ao buscar usuários:', error)
+        return null
+      }
+      
+      const user = authUsers?.users?.find(u => u.email === email)
+      return user || null
+    } catch (error) {
+      console.error('Erro ao buscar usuário por email:', error)
       return null
     }
-    
-    return data
   },
 
-  // Criar perfil de usuário
-  createProfile: async (userId: string, userData: Partial<User>) => {
-    const { data, error } = await supabase
-      .from('users')
-      .insert([
-        {
-          id: userId,
-          ...userData,
-        },
-      ])
-      .select()
-    return { data, error }
-  },
-
-  // Obter perfil do usuário
+  // Obter perfil do usuário usando auth.users
   getProfile: async (userId: string) => {
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', userId)
-      .single()
-    return { data, error }
+    try {
+      const { data: user, error } = await supabase.auth.admin.getUserById(userId)
+      
+      if (error) {
+        console.error('Erro ao buscar perfil:', error)
+        return { data: null, error }
+      }
+
+      // Extrair dados do user_metadata
+      const profile = {
+        id: user.user?.id,
+        email: user.user?.email,
+        full_name: user.user?.user_metadata?.full_name || user.user?.email?.split('@')[0],
+        subscription_plan: user.user?.user_metadata?.subscription_plan || 'free',
+        subscription_status: user.user?.user_metadata?.subscription_status || 'active',
+        credits_remaining: user.user?.user_metadata?.credits_remaining || 10,
+        total_credits_purchased: user.user?.user_metadata?.total_credits_purchased || 0,
+        created_at: user.user?.created_at,
+        updated_at: user.user?.updated_at
+      }
+      
+      return { data: profile, error: null }
+    } catch (error) {
+      console.error('Erro ao obter perfil:', error)
+      return { data: null, error }
+    }
   },
 
-  // Atualizar perfil do usuário
-  updateProfile: async (userId: string, updates: Partial<User>) => {
-    const { data, error } = await supabase
-      .from('users')
-      .update(updates)
-      .eq('id', userId)
-      .select()
-    return { data, error }
+  // Atualizar perfil do usuário usando auth.users metadata
+  updateProfile: async (userId: string, updates: any) => {
+    try {
+      // Buscar dados atuais
+      const { data: currentUser, error: fetchError } = await supabase.auth.admin.getUserById(userId)
+      
+      if (fetchError || !currentUser.user) {
+        console.error('Erro ao buscar usuário atual:', fetchError)
+        return { data: null, error: fetchError }
+      }
+
+      // Mesclar com dados existentes
+      const currentMetadata = currentUser.user.user_metadata || {}
+      const newMetadata = {
+        ...currentMetadata,
+        ...updates,
+        updated_at: new Date().toISOString()
+      }
+
+      // Atualizar user_metadata
+      const { data, error } = await supabase.auth.admin.updateUserById(userId, {
+        user_metadata: newMetadata
+      })
+      
+      if (error) {
+        console.error('Erro ao atualizar perfil:', error)
+        return { data: null, error }
+      }
+      
+      return { data: data.user, error: null }
+    } catch (error) {
+      console.error('Erro ao atualizar perfil:', error)
+      return { data: null, error }
+    }
   },
 
   // Atualizar plano de assinatura por email
   updatePlanByEmail: async (email: string, plan: string, credits: number) => {
-    const { data, error } = await supabase
-      .from('users')
-      .update({
+    try {
+      console.log(`🔄 Atualizando plano para ${email}: ${plan} com ${credits} créditos`)
+      
+      // Buscar usuário por email
+      const { data: authUsers, error: listError } = await supabase.auth.admin.listUsers()
+      
+      if (listError) {
+        console.error('Erro ao listar usuários:', listError)
+        return null
+      }
+      
+      const user = authUsers?.users?.find(u => u.email === email)
+      
+      if (!user) {
+        console.error(`Usuário não encontrado: ${email}`)
+        return null
+      }
+
+      // Atualizar user_metadata
+      const currentMetadata = user.user_metadata || {}
+      const newMetadata = {
+        ...currentMetadata,
         subscription_plan: plan,
         subscription_status: 'active',
         credits_remaining: credits,
         updated_at: new Date().toISOString()
+      }
+
+      const { data, error } = await supabase.auth.admin.updateUserById(user.id, {
+        user_metadata: newMetadata
       })
-      .eq('email', email)
-      .select()
-    
-    if (error) {
-      console.error('Erro ao atualizar plano:', error)
+      
+      if (error) {
+        console.error('Erro ao atualizar plano:', error)
+        return null
+      }
+      
+      console.log(`✅ Plano atualizado com sucesso para ${email}`)
+      return data.user
+    } catch (error) {
+      console.error('Erro ao atualizar plano por email:', error)
       return null
     }
-    
-    return data
   },
 
   // Atualizar plano de assinatura por ID
   updateSubscriptionPlan: async (userId: string, plan: string, status: string) => {
-    const { data, error } = await supabase
-      .from('users')
-      .update({
+    try {
+      // Buscar dados atuais
+      const { data: currentUser, error: fetchError } = await supabase.auth.admin.getUserById(userId)
+      
+      if (fetchError || !currentUser.user) {
+        console.error('Erro ao buscar usuário:', fetchError)
+        return { data: null, error: fetchError }
+      }
+
+      // Atualizar metadata
+      const currentMetadata = currentUser.user.user_metadata || {}
+      const newMetadata = {
+        ...currentMetadata,
         subscription_plan: plan,
         subscription_status: status,
-        updated_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+
+      const { data, error } = await supabase.auth.admin.updateUserById(userId, {
+        user_metadata: newMetadata
       })
-      .eq('id', userId)
-      .select()
-    return { data, error }
+      
+      return { data: data?.user, error }
+    } catch (error) {
+      console.error('Erro ao atualizar subscription:', error)
+      return { data: null, error }
+    }
   },
+
+  // Listar todos os usuários
+  listAll: async () => {
+    try {
+      const { data: authUsers, error } = await supabase.auth.admin.listUsers()
+      
+      if (error) {
+        console.error('Erro ao listar usuários:', error)
+        return { data: [], error }
+      }
+      
+      const users = authUsers?.users?.map(user => ({
+        id: user.id,
+        email: user.email,
+        full_name: user.user_metadata?.full_name || user.email?.split('@')[0],
+        subscription_plan: user.user_metadata?.subscription_plan || 'free',
+        subscription_status: user.user_metadata?.subscription_status || 'active',
+        credits_remaining: user.user_metadata?.credits_remaining || 10,
+        created_at: user.created_at,
+        updated_at: user.updated_at
+      })) || []
+      
+      return { data: users, error: null }
+    } catch (error) {
+      console.error('Erro ao listar usuários:', error)
+      return { data: [], error }
+    }
+  }
 }
 
 // Funções para gerenciar assinaturas
