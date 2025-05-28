@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Stripe from 'stripe'
 import { getPlanByStripePrice } from '@/lib/stripe'
-import { supabase, users, subscriptions } from '@/lib/supabase'
+import { supabase, supabaseAdmin, users, subscriptions } from '@/lib/supabase'
 
 // Configurar Stripe diretamente com verificação
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY
@@ -122,7 +122,12 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     console.log(`📦 Plano determinado: ${planName} com ${creditsToAdd} créditos`)
 
     // Buscar usuário por email usando auth.users
-    const { data: authUsers, error: listError } = await supabase.auth.admin.listUsers()
+    if (!supabaseAdmin) {
+      console.error('❌ Cliente admin não configurado - SUPABASE_SERVICE_ROLE_KEY necessária')
+      return
+    }
+
+    const { data: authUsers, error: listError } = await supabaseAdmin.auth.admin.listUsers()
     
     if (listError) {
       console.error('❌ Erro ao listar usuários:', listError)
@@ -148,7 +153,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
         updated_at: new Date().toISOString()
       }
 
-      const { data: updatedUser, error: updateError } = await supabase.auth.admin.updateUserById(userId, {
+      const { data: updatedUser, error: updateError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
         user_metadata: newMetadata
       })
 
@@ -162,7 +167,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       console.log('🆕 Usuário não encontrado, criando novo usuário')
       
       // Criar novo usuário no Auth
-      const { data: newUser, error: userError } = await supabase.auth.admin.createUser({
+      const { data: newUser, error: userError } = await supabaseAdmin.auth.admin.createUser({
         email: customerEmail,
         email_confirm: true,
         user_metadata: {

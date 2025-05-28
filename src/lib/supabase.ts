@@ -3,9 +3,20 @@ import { createClient } from '@supabase/supabase-js'
 // Configurações corretas do Supabase
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://cklmyduznlathpeoczjv.supabase.co'
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNrbG15ZHV6bmxhdGhwZW9jemp2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ3MTkwMzIsImV4cCI6MjA2MDI5NTAzMn0.Rp4ndKYkr-N7q9Hio8XnGqEl_3d-8Qpo2o91Yhi0gvI'
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
-// Cliente Supabase
+// Cliente Supabase público
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+
+// Cliente Supabase admin (para operações administrativas)
+export const supabaseAdmin = supabaseServiceKey 
+  ? createClient(supabaseUrl, supabaseServiceKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      }
+    })
+  : null
 
 // Tipos para as tabelas principais
 export interface User {
@@ -110,7 +121,12 @@ export const users = {
   // Buscar usuário por email usando auth.users
   getByEmail: async (email: string) => {
     try {
-      const { data: authUsers, error } = await supabase.auth.admin.listUsers()
+      if (!supabaseAdmin) {
+        console.error('❌ Cliente admin não configurado - SUPABASE_SERVICE_ROLE_KEY necessária')
+        return null
+      }
+
+      const { data: authUsers, error } = await supabaseAdmin.auth.admin.listUsers()
       
       if (error) {
         console.error('Erro ao buscar usuários:', error)
@@ -128,7 +144,12 @@ export const users = {
   // Obter perfil do usuário usando auth.users
   getProfile: async (userId: string) => {
     try {
-      const { data: user, error } = await supabase.auth.admin.getUserById(userId)
+      if (!supabaseAdmin) {
+        console.error('❌ Cliente admin não configurado - SUPABASE_SERVICE_ROLE_KEY necessária')
+        return { data: null, error: 'Cliente admin não configurado' }
+      }
+
+      const { data: user, error } = await supabaseAdmin.auth.admin.getUserById(userId)
       
       if (error) {
         console.error('Erro ao buscar perfil:', error)
@@ -158,8 +179,13 @@ export const users = {
   // Atualizar perfil do usuário usando auth.users metadata
   updateProfile: async (userId: string, updates: any) => {
     try {
+      if (!supabaseAdmin) {
+        console.error('❌ Cliente admin não configurado - SUPABASE_SERVICE_ROLE_KEY necessária')
+        return { data: null, error: 'Cliente admin não configurado' }
+      }
+
       // Buscar dados atuais
-      const { data: currentUser, error: fetchError } = await supabase.auth.admin.getUserById(userId)
+      const { data: currentUser, error: fetchError } = await supabaseAdmin.auth.admin.getUserById(userId)
       
       if (fetchError || !currentUser.user) {
         console.error('Erro ao buscar usuário atual:', fetchError)
@@ -175,7 +201,7 @@ export const users = {
       }
 
       // Atualizar user_metadata
-      const { data, error } = await supabase.auth.admin.updateUserById(userId, {
+      const { data, error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
         user_metadata: newMetadata
       })
       
@@ -194,10 +220,15 @@ export const users = {
   // Atualizar plano de assinatura por email
   updatePlanByEmail: async (email: string, plan: string, credits: number) => {
     try {
+      if (!supabaseAdmin) {
+        console.error('❌ Cliente admin não configurado - SUPABASE_SERVICE_ROLE_KEY necessária')
+        return null
+      }
+
       console.log(`🔄 Atualizando plano para ${email}: ${plan} com ${credits} créditos`)
       
       // Buscar usuário por email
-      const { data: authUsers, error: listError } = await supabase.auth.admin.listUsers()
+      const { data: authUsers, error: listError } = await supabaseAdmin.auth.admin.listUsers()
       
       if (listError) {
         console.error('Erro ao listar usuários:', listError)
@@ -221,7 +252,7 @@ export const users = {
         updated_at: new Date().toISOString()
       }
 
-      const { data, error } = await supabase.auth.admin.updateUserById(user.id, {
+      const { data, error } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
         user_metadata: newMetadata
       })
       
@@ -241,8 +272,13 @@ export const users = {
   // Atualizar plano de assinatura por ID
   updateSubscriptionPlan: async (userId: string, plan: string, status: string) => {
     try {
+      if (!supabaseAdmin) {
+        console.error('❌ Cliente admin não configurado - SUPABASE_SERVICE_ROLE_KEY necessária')
+        return { data: null, error: 'Cliente admin não configurado' }
+      }
+
       // Buscar dados atuais
-      const { data: currentUser, error: fetchError } = await supabase.auth.admin.getUserById(userId)
+      const { data: currentUser, error: fetchError } = await supabaseAdmin.auth.admin.getUserById(userId)
       
       if (fetchError || !currentUser.user) {
         console.error('Erro ao buscar usuário:', fetchError)
@@ -258,7 +294,7 @@ export const users = {
         updated_at: new Date().toISOString()
       }
 
-      const { data, error } = await supabase.auth.admin.updateUserById(userId, {
+      const { data, error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
         user_metadata: newMetadata
       })
       
@@ -272,7 +308,12 @@ export const users = {
   // Listar todos os usuários
   listAll: async () => {
     try {
-      const { data: authUsers, error } = await supabase.auth.admin.listUsers()
+      if (!supabaseAdmin) {
+        console.error('❌ Cliente admin não configurado - SUPABASE_SERVICE_ROLE_KEY necessária')
+        return { data: [], error: 'Cliente admin não configurado' }
+      }
+
+      const { data: authUsers, error } = await supabaseAdmin.auth.admin.listUsers()
       
       if (error) {
         console.error('Erro ao listar usuários:', error)
