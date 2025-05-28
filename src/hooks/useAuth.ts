@@ -71,7 +71,7 @@ export function useAuth() {
       setLoading(true)
       console.log('Criando conta via API personalizada...')
       
-      // Usar API personalizada que funciona
+      // Usar API personalizada que funciona com função SQL
       const response = await fetch('/api/register-user', {
         method: 'POST',
         headers: {
@@ -87,15 +87,24 @@ export function useAuth() {
       const result = await response.json()
       
       if (result.success) {
-        console.log('Conta criada com sucesso!')
+        console.log('✅ Conta criada com sucesso!')
         return { error: null }
       } else {
-        console.error('Erro no cadastro:', result.error)
-        return { error: new Error(result.error) }
+        console.error('❌ Erro no cadastro:', result.error)
+        
+        // Tratar diferentes tipos de erro
+        let errorMessage = result.error
+        if (result.details?.message?.includes('duplicate key')) {
+          errorMessage = 'Este email já está em uso'
+        } else if (result.details?.message?.includes('invalid email')) {
+          errorMessage = 'Email inválido'
+        }
+        
+        return { error: new Error(errorMessage) }
       }
     } catch (error) {
-      console.error('Erro inesperado ao criar conta:', error)
-      return { error }
+      console.error('❌ Erro inesperado ao criar conta:', error)
+      return { error: new Error('Erro de conexão. Tente novamente.') }
     } finally {
       setLoading(false)
     }
