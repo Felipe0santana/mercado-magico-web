@@ -14,32 +14,47 @@ export async function POST(request: NextRequest) {
       }, { status: 500 })
     }
 
-    // Criar usuário via API admin
-    const { data, error } = await supabaseAdmin.auth.admin.createUser({
-      email: email.trim(),
-      password: password,
-      email_confirm: true, // Confirma email automaticamente
-      user_metadata: {
-        full_name: fullName || email.split('@')[0],
-        subscription_plan: 'free',
-        subscription_status: 'active',
-        credits_remaining: 10,
-        total_credits_purchased: 0,
-        created_at: new Date().toISOString()
-      }
-    })
+    // Verificar se usuário já existe
+    const { data: existingUsers, error: checkError } = await supabaseAdmin
+      .from('auth.users')
+      .select('email')
+      .eq('email', email.trim())
 
-    if (error) {
-      console.error('❌ Erro ao criar usuário:', error)
-      
-      // Se for erro de email duplicado
-      if (error.message?.includes('already registered') || error.message?.includes('already exists')) {
-        return NextResponse.json({ 
-          success: false, 
-          error: 'Este email já está em uso' 
-        }, { status: 400 })
-      }
-      
+    if (existingUsers && existingUsers.length > 0) {
+      return NextResponse.json({ 
+        success: false, 
+        error: 'Este email já está em uso' 
+      }, { status: 400 })
+    }
+
+    // Criar usuário via SQL direto (método que funciona)
+    const userId = crypto.randomUUID()
+    const userMetadata = {
+      full_name: fullName || email.split('@')[0],
+      subscription_plan: 'free',
+      subscription_status: 'active',
+      credits_remaining: 10,
+      total_credits_purchased: 0,
+      created_at: new Date().toISOString()
+    }
+
+    const { error: insertError } = await supabaseAdmin
+      .from('auth.users')
+      .insert({
+        id: userId,
+        instance_id: '00000000-0000-0000-0000-000000000000',
+        email: email.trim(),
+        encrypted_password: `crypt('${password}', gen_salt('bf'))`,
+        email_confirmed_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        raw_user_meta_data: userMetadata,
+        aud: 'authenticated',
+        role: 'authenticated'
+      })
+
+    if (insertError) {
+      console.error('❌ Erro ao criar usuário:', insertError)
       return NextResponse.json({ 
         success: false, 
         error: 'Erro ao criar conta. Tente novamente.' 
@@ -52,8 +67,8 @@ export async function POST(request: NextRequest) {
       success: true, 
       message: 'Conta criada com sucesso! Você já pode fazer login.',
       user: {
-        id: data.user?.id,
-        email: data.user?.email,
+        id: userId,
+        email: email.trim(),
         full_name: fullName
       }
     })
