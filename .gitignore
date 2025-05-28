@@ -77,3 +77,6 @@ jspm_packages/
 # Temporary folders
 tmp/
 temp/ vercel-env-import.env
+
+# Local Netlify folder
+.netlify
