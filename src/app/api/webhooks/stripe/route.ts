@@ -3,14 +3,24 @@ import Stripe from 'stripe'
 import { getPlanByStripePrice } from '@/lib/stripe'
 import { supabase, users, subscriptions } from '@/lib/supabase'
 
-// Configurar Stripe diretamente
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+// Configurar Stripe diretamente com verificação
+const stripeSecretKey = process.env.STRIPE_SECRET_KEY
+if (!stripeSecretKey) {
+  console.warn('STRIPE_SECRET_KEY não está definida')
+}
+
+const stripe = stripeSecretKey ? new Stripe(stripeSecretKey, {
   apiVersion: '2025-04-30.basil',
-})
+}) : null
 
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET
 
 export async function POST(request: NextRequest) {
+  if (!stripe) {
+    console.error('Stripe não está configurado')
+    return NextResponse.json({ error: 'Stripe not configured' }, { status: 500 })
+  }
+
   try {
     const body = await request.text()
     const signature = request.headers.get('stripe-signature')
@@ -136,6 +146,11 @@ async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
 
     if (!planName) {
       console.error('Plano não encontrado na assinatura')
+      return
+    }
+
+    if (!stripe) {
+      console.error('Stripe não está configurado')
       return
     }
 
