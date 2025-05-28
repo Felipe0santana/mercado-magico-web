@@ -436,4 +436,54 @@ export function getCreditsByPlan(plan: string): number {
   }
 }
 
+// Função para mapear valores do Stripe para planos
+export function mapStripeAmountToPlan(amount: number): { plan: string; credits: number } {
+  switch (amount) {
+    case 999: // R$ 9,99 - Plus
+      return { plan: 'plus', credits: 50 }
+    case 2999: // R$ 29,99 - Pro  
+      return { plan: 'pro', credits: 200 }
+    case 9999: // R$ 99,99 - Premium
+      return { plan: 'premium', credits: -1 } // Ilimitado
+    default:
+      console.warn(`⚠️ Valor não reconhecido: ${amount}`)
+      return { plan: 'free', credits: 10 }
+  }
+}
+
+export async function updateUserPlan(email: string, plan: string, creditsToAdd: number = -1) {
+  try {
+    console.log(`🔄 Atualizando plano do usuário ${email} para ${plan}`)
+
+    if (!supabaseAdmin) {
+      throw new Error('Cliente admin não configurado')
+    }
+
+    // Definir créditos baseado no plano se não especificado
+    if (creditsToAdd === -1) {
+      switch (plan) {
+        case 'free':
+          creditsToAdd = 10
+          break
+        case 'plus':
+          creditsToAdd = 50
+          break
+        case 'pro':
+          creditsToAdd = 200
+          break
+        case 'premium':
+          creditsToAdd = -1 // Ilimitado
+          break
+        default:
+          creditsToAdd = 10
+      }
+    }
+
+    // ... existing code ...
+  } catch (error) {
+    console.error('Erro ao atualizar plano:', error)
+    return null
+  }
+}
+
 export default supabase 

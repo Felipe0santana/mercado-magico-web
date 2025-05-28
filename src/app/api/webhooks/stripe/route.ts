@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import Stripe from 'stripe'
 import { getPlanByStripePrice } from '@/lib/stripe'
 import { supabase, supabaseAdmin, users, subscriptions } from '@/lib/supabase'
+import { mapStripeAmountToPlan } from '@/lib/supabase'
 
 // Configurar Stripe diretamente com verificação
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY
@@ -95,126 +96,99 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     console.log('📧 Customer email:', session.customer_details?.email)
     console.log('💰 Amount total:', session.amount_total)
 
-    const customerEmail = session.customer_details?.email
-    if (!customerEmail) {
-      console.error('❌ Email do cliente não encontrado na sessão')
-      return
+    const email = session.customer_details?.email
+    const amount = session.amount_total || 0
+
+    if (!email) {
+      console.error('❌ Email do cliente não encontrado')
+      return NextResponse.json({ error: 'Email não encontrado' }, { status: 400 })
     }
 
-    // Determinar plano baseado no valor
-    const amountInCents = session.amount_total || 0
-    const amountInReais = amountInCents / 100
+    // Mapear valor para plano e créditos
+    const { plan, credits } = mapStripeAmountToPlan(amount)
+    
+    console.log(`📊 Mapeamento: R$ ${amount/100} → ${plan} (${credits === -1 ? 'ilimitados' : credits} créditos)`)
 
-    let planName = 'free'
-    let creditsToAdd = 10
-
-    if (amountInReais >= 99.99) {
-      planName = 'premium'
-      creditsToAdd = 500
-    } else if (amountInReais >= 29.99) {
-      planName = 'pro'
-      creditsToAdd = 100
-    } else if (amountInReais >= 9.99) {
-      planName = 'plus'
-      creditsToAdd = 50
-    }
-
-    console.log(`📦 Plano determinado: ${planName} com ${creditsToAdd} créditos`)
-
-    // Buscar usuário por email usando auth.users
     if (!supabaseAdmin) {
-      console.error('❌ Cliente admin não configurado - SUPABASE_SERVICE_ROLE_KEY necessária')
-      return
+      console.error('❌ Cliente admin não configurado')
+      return NextResponse.json({ error: 'Cliente admin não configurado' }, { status: 500 })
     }
 
-    const { data: authUsers, error: listError } = await supabaseAdmin.auth.admin.listUsers()
+    // Buscar usuário por email
+    const { data: users, error: listError } = await supabaseAdmin.auth.admin.listUsers()
     
     if (listError) {
       console.error('❌ Erro ao listar usuários:', listError)
-      return
+      return NextResponse.json({ error: 'Erro ao buscar usuários' }, { status: 500 })
     }
-    
-    const user = authUsers?.users?.find(u => u.email === customerEmail)
-    let userId: string
 
-    if (user) {
-      console.log(`✅ Usuário encontrado: ${customerEmail}`)
-      userId = user.id
+    const user = users?.users?.find(u => u.email === email)
 
-      // Atualizar user_metadata do usuário existente
-      const currentMetadata = user.user_metadata || {}
-      const newMetadata = {
-        ...currentMetadata,
-        subscription_plan: planName,
-        subscription_status: 'active',
-        credits_remaining: creditsToAdd,
-        total_credits_purchased: (currentMetadata.total_credits_purchased || 0) + creditsToAdd,
-        last_purchase_date: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }
-
-      const { data: updatedUser, error: updateError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-        user_metadata: newMetadata
-      })
-
-      if (updateError) {
-        console.error('❌ Erro ao atualizar usuário:', updateError)
-        return
-      }
-
-      console.log(`✅ Usuário ${customerEmail} atualizado para plano ${planName} com ${creditsToAdd} créditos`)
-    } else {
-      console.log('🆕 Usuário não encontrado, criando novo usuário')
+    if (!user) {
+      console.log(`👤 Usuário ${email} não encontrado, criando...`)
       
-      // Criar novo usuário no Auth
-      const { data: newUser, error: userError } = await supabaseAdmin.auth.admin.createUser({
-        email: customerEmail,
+      // Criar usuário se não existir
+      const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
+        email,
         email_confirm: true,
         user_metadata: {
-          subscription_plan: planName,
+          full_name: email.split('@')[0],
+          subscription_plan: plan,
           subscription_status: 'active',
-          credits_remaining: creditsToAdd,
-          total_credits_purchased: creditsToAdd,
-          last_purchase_date: new Date().toISOString(),
-          created_at: new Date().toISOString(),
+          credits_remaining: credits,
+          total_credits_purchased: credits === -1 ? 0 : credits,
+          stripe_customer_id: session.customer,
+          last_payment_amount: amount,
+          last_payment_date: new Date().toISOString(),
+          created_via_stripe: true,
           updated_at: new Date().toISOString()
         }
       })
 
-      if (userError || !newUser.user) {
-        console.error('❌ Erro ao criar usuário:', userError)
-        return
+      if (createError) {
+        console.error('❌ Erro ao criar usuário:', createError)
+        return NextResponse.json({ error: 'Erro ao criar usuário' }, { status: 500 })
       }
 
-      userId = newUser.user.id
-      console.log(`✅ Novo usuário criado: ${customerEmail} com plano ${planName} e ${creditsToAdd} créditos`)
+      console.log(`✅ Usuário ${email} criado com plano ${plan} e ${credits === -1 ? 'créditos ilimitados' : credits + ' créditos'}`)
+      
+      return NextResponse.json({ 
+        success: true, 
+        message: 'Usuário criado e plano ativado',
+        user: { email, plan, credits }
+      })
     }
 
-    // Criar registro de assinatura (opcional, para histórico)
-    if (session.subscription) {
-      const { error: subscriptionError } = await supabase
-        .from('subscriptions')
-        .insert({
-          user_id: userId,
-          stripe_subscription_id: session.subscription as string,
-          stripe_customer_id: session.customer as string,
-          status: 'active',
-          plan: planName,
-          current_period_start: new Date().toISOString(),
-          current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 dias
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        })
-
-      if (subscriptionError) {
-        console.error('❌ Erro ao criar registro de assinatura:', subscriptionError)
-      } else {
-        console.log('✅ Registro de assinatura criado')
+    // Atualizar usuário existente
+    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
+      user_metadata: {
+        ...user.user_metadata,
+        subscription_plan: plan,
+        subscription_status: 'active',
+        credits_remaining: credits,
+        total_credits_purchased: (user.user_metadata?.total_credits_purchased || 0) + (credits === -1 ? 0 : credits),
+        stripe_customer_id: session.customer,
+        last_payment_amount: amount,
+        last_payment_date: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       }
+    })
+
+    if (updateError) {
+      console.error('❌ Erro ao atualizar usuário:', updateError)
+      return NextResponse.json({ error: 'Erro ao atualizar usuário' }, { status: 500 })
     }
 
+    console.log(`✅ Plano do usuário ${email} atualizado para ${plan} com ${credits === -1 ? 'créditos ilimitados' : credits + ' créditos'}`)
+
+    return NextResponse.json({ 
+      success: true, 
+      message: 'Plano atualizado com sucesso',
+      user: { email, plan, credits }
+    })
   } catch (error) {
     console.error('❌ Erro ao processar checkout completed:', error)
+    return NextResponse.json({ error: 'Erro ao processar checkout completed' }, { status: 500 })
   }
 }
 
