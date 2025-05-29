@@ -165,6 +165,26 @@ export function useAuth() {
     }
   }
 
+  const resetPassword = async (email: string) => {
+    try {
+      console.log(`🔑 [AUTH] Enviando email de recuperação para: ${email}`)
+      
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      })
+
+      if (error) {
+        console.error('❌ [AUTH] Erro ao enviar email de recuperação:', error)
+        throw error
+      }
+
+      console.log('✅ [AUTH] Email de recuperação enviado com sucesso')
+    } catch (error) {
+      console.error('❌ [AUTH] Erro no resetPassword:', error)
+      throw error
+    }
+  }
+
   return {
     user,
     loading,
@@ -172,6 +192,7 @@ export function useAuth() {
     signIn,
     signUp,
     signOut,
+    resetPassword,
     refreshUser
   }
 } 
