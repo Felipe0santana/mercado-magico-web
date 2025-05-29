@@ -18,12 +18,21 @@ export function useAuth() {
   const [user, setUser] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [lastRefresh, setLastRefresh] = useState<number>(0)
 
   const refreshUser = useCallback(async () => {
     try {
       setIsRefreshing(true)
       console.log('🔄 [AUTH] Atualizando dados do usuário...')
       
+      // Forçar refresh do token para pegar dados atualizados
+      const { data: { session }, error: sessionError } = await supabase.auth.refreshSession()
+      
+      if (sessionError) {
+        console.error('❌ [AUTH] Erro ao atualizar sessão:', sessionError)
+        return
+      }
+
       const { data: { user: authUser }, error: authError } = await supabase.auth.getUser()
       
       if (authError) {
@@ -172,6 +181,41 @@ export function useAuth() {
       subscription.unsubscribe()
     }
   }, [])
+
+  // Polling para verificar mudanças após pagamentos
+  useEffect(() => {
+    if (!user) return
+
+    const checkForUpdates = async () => {
+      try {
+        const { data: { user: authUser } } = await supabase.auth.getUser()
+        if (!authUser) return
+
+        const currentForceRefresh = authUser.user_metadata?.force_refresh || 0
+        const currentUpdatedAt = authUser.user_metadata?.updated_at
+
+        // Se houve mudança no force_refresh ou updated_at, atualizar
+        if (currentForceRefresh > lastRefresh || 
+            (currentUpdatedAt && currentUpdatedAt !== user.updated_at)) {
+          
+          console.log('🔄 [AUTH] Detectada mudança nos dados, atualizando...')
+          setLastRefresh(currentForceRefresh)
+          await refreshUser()
+        }
+      } catch (error) {
+        console.error('❌ [AUTH] Erro no polling:', error)
+      }
+    }
+
+    // Verificar a cada 3 segundos por 30 segundos após login
+    const interval = setInterval(checkForUpdates, 3000)
+    const timeout = setTimeout(() => clearInterval(interval), 30000)
+
+    return () => {
+      clearInterval(interval)
+      clearTimeout(timeout)
+    }
+  }, [user, lastRefresh, refreshUser])
 
   const signIn = async (email: string, password: string) => {
     try {

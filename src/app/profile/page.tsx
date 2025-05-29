@@ -50,7 +50,7 @@ interface UserStats {
 }
 
 export default function ProfilePage() {
-  const { user, loading, signOut } = useAuth()
+  const { user, loading, signOut, refreshUser } = useAuth()
   const router = useRouter()
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
   const [userStats, setUserStats] = useState<UserStats | null>(null)
@@ -72,6 +72,45 @@ export default function ProfilePage() {
   const [loadingAction, setLoadingAction] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [isRefreshing, setIsRefreshing] = useState(false)
+
+  // Forçar refresh dos dados do usuário quando a página carregar
+  useEffect(() => {
+    const forceRefresh = async () => {
+      if (refreshUser) {
+        setIsRefreshing(true)
+        await refreshUser()
+        setIsRefreshing(false)
+      }
+    }
+    
+    forceRefresh()
+  }, [refreshUser])
+
+  // Detectar quando o usuário volta da página de pagamento
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && refreshUser) {
+        console.log('🔄 [PROFILE] Página ficou visível, atualizando dados...')
+        refreshUser()
+      }
+    }
+
+    const handleFocus = () => {
+      if (refreshUser) {
+        console.log('🔄 [PROFILE] Página recebeu foco, atualizando dados...')
+        refreshUser()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('focus', handleFocus)
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('focus', handleFocus)
+    }
+  }, [refreshUser])
 
   useEffect(() => {
     if (user) {
@@ -269,12 +308,14 @@ export default function ProfilePage() {
     }).format(value)
   }
 
-  if (loading) {
+  if (loading || isRefreshing) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="flex items-center space-x-3">
           <div className="w-8 h-8 border-4 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
-          <div className="text-white text-xl">Carregando perfil...</div>
+          <div className="text-white text-xl">
+            {isRefreshing ? 'Atualizando dados...' : 'Carregando perfil...'}
+          </div>
         </div>
       </div>
     )
