@@ -94,53 +94,35 @@ export default function ProfilePage() {
     }
   }, [user])
 
-  // Adicionar listener para mudanças em tempo real
-  useEffect(() => {
-    if (user?.id) {
-      const subscription = supabase
-        .channel('profile-changes')
-        .on(
-          'postgres_changes',
-          {
-            event: 'UPDATE',
-            schema: 'public',
-            table: 'users',
-            filter: `id=eq.${user.id}`
-          },
-          (payload) => {
-            console.log('🔄 Perfil atualizado em tempo real:', payload.new)
-            setProfile(payload.new as UserProfile)
-          }
-        )
-        .subscribe()
-
-      return () => {
-        subscription.unsubscribe()
-      }
-    }
-  }, [user?.id])
-
   const loadUserProfile = async () => {
     try {
       setLoading(true)
       console.log('🔄 Carregando perfil do usuário...')
       
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', user?.id)
-        .single()
-
-      if (error) {
-        console.error('Erro ao carregar perfil:', error)
+      // Usar dados do usuário autenticado diretamente
+      if (!user) {
+        console.error('Usuário não encontrado')
         return
       }
 
-      console.log('✅ Perfil carregado:', data)
-      setProfile(data)
+      // Extrair dados do user_metadata
+      const profileData = {
+        id: user.id,
+        email: user.email || '',
+        full_name: user.user_metadata?.full_name || user.email?.split('@')[0] || '',
+        subscription_plan: user.user_metadata?.subscription_plan || 'free',
+        subscription_status: user.user_metadata?.subscription_status || 'active',
+        credits_remaining: user.user_metadata?.credits_remaining || 10,
+        total_credits_purchased: user.user_metadata?.total_credits_purchased || 0,
+        created_at: user.created_at || new Date().toISOString(),
+        updated_at: user.updated_at || new Date().toISOString()
+      }
+
+      console.log('✅ Perfil carregado:', profileData)
+      setProfile(profileData)
       setEditForm({
-        full_name: data.full_name || '',
-        email: data.email || ''
+        full_name: profileData.full_name || '',
+        email: profileData.email || ''
       })
     } catch (error) {
       console.error('Erro inesperado:', error)
@@ -270,16 +252,22 @@ export default function ProfilePage() {
     try {
       setSaving(true)
       
-      const { error } = await supabase
-        .from('users')
-        .update({
-          full_name: editForm.full_name,
-          updated_at: new Date().toISOString()
+      // Usar API personalizada para atualizar perfil
+      const response = await fetch('/api/update-profile', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: user?.id,
+          full_name: editForm.full_name
         })
-        .eq('id', user?.id)
+      })
 
-      if (error) {
-        console.error('Erro ao salvar perfil:', error)
+      const result = await response.json()
+
+      if (!result.success) {
+        console.error('Erro ao salvar perfil:', result.error)
         alert('Erro ao salvar alterações')
         return
       }
