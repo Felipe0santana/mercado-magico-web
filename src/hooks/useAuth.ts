@@ -1,145 +1,111 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { User, Session } from '@supabase/supabase-js'
+import { useState, useEffect, useCallback } from 'react'
+import { User } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 
+interface UserProfile {
+  id: string
+  email: string
+  subscription_plan: 'free' | 'plus' | 'pro' | 'premium'
+  subscription_status: string
+  credits_remaining: number
+  updated_at?: string
+  force_refresh?: number
+}
+
 export function useAuth() {
-  const [user, setUser] = useState<User | null>(null)
-  const [session, setSession] = useState<Session | null>(null)
+  const [user, setUser] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
-  useEffect(() => {
-    const getInitialSession = async () => {
-      try {
-        const { data: { session }, error } = await supabase.auth.getSession()
-        
-        if (error) {
-          console.error('Erro ao obter sessão:', error)
-        } else {
-          setSession(session)
-          setUser(session?.user ?? null)
-        }
-      } catch (error) {
-        console.error('Erro inesperado ao obter sessão:', error)
-      } finally {
-        setLoading(false)
+  const refreshUser = useCallback(async () => {
+    try {
+      setIsRefreshing(true)
+      console.log('🔄 [AUTH] Atualizando dados do usuário...')
+      
+      const { data: { user: authUser }, error: authError } = await supabase.auth.getUser()
+      
+      if (authError) {
+        console.error('❌ [AUTH] Erro ao buscar usuário:', authError)
+        setUser(null)
+        return
       }
+
+      if (!authUser) {
+        console.log('⚠️ [AUTH] Usuário não autenticado')
+        setUser(null)
+        return
+      }
+
+      const userProfile: UserProfile = {
+        id: authUser.id,
+        email: authUser.email || '',
+        subscription_plan: authUser.user_metadata?.subscription_plan || 'free',
+        subscription_status: authUser.user_metadata?.subscription_status || 'inactive',
+        credits_remaining: authUser.user_metadata?.credits_remaining ?? 10,
+        updated_at: authUser.user_metadata?.updated_at,
+        force_refresh: authUser.user_metadata?.force_refresh
+      }
+
+      console.log('✅ [AUTH] Usuário atualizado:', {
+        email: userProfile.email,
+        plan: userProfile.subscription_plan,
+        credits: userProfile.credits_remaining,
+        updated_at: userProfile.updated_at
+      })
+
+      setUser(userProfile)
+    } catch (error) {
+      console.error('❌ [AUTH] Erro ao atualizar usuário:', error)
+    } finally {
+      setIsRefreshing(false)
     }
-
-    getInitialSession()
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('🔄 Auth state changed:', event)
-        setSession(session)
-        setUser(session?.user ?? null)
-        setLoading(false)
-      }
-    )
-
-    return () => subscription.unsubscribe()
   }, [])
 
-  // Polling para verificar atualizações do usuário com frequência adaptativa
+  // Inicialização e listener de auth
   useEffect(() => {
-    if (!user) return
-
-    let pollInterval = 10000 // Começar com 10 segundos
-    let consecutiveNoChanges = 0
+    console.log('🚀 [AUTH] Inicializando useAuth...')
     
-    const checkForUpdates = async () => {
-      try {
-        const { data: { user: updatedUser }, error } = await supabase.auth.getUser()
-        
-        if (error) {
-          console.error('Erro ao verificar atualizações:', error)
-          return
-        }
+    // Carregar usuário inicial
+    refreshUser().finally(() => setLoading(false))
 
-        if (updatedUser) {
-          // Verificar se houve mudanças significativas
-          const hasChanges = 
-            updatedUser.updated_at !== user.updated_at ||
-            updatedUser.user_metadata?.subscription_plan !== user.user_metadata?.subscription_plan ||
-            updatedUser.user_metadata?.credits_remaining !== user.user_metadata?.credits_remaining ||
-            updatedUser.user_metadata?.subscription_status !== user.user_metadata?.subscription_status
-
-          if (hasChanges) {
-            console.log('🔄 Mudanças detectadas no usuário, atualizando...')
-            console.log('📊 Plano:', updatedUser.user_metadata?.subscription_plan)
-            console.log('💳 Créditos:', updatedUser.user_metadata?.credits_remaining)
-            setUser(updatedUser)
-            consecutiveNoChanges = 0
-            pollInterval = 5000 // Acelerar polling após mudança
-          } else {
-            consecutiveNoChanges++
-            // Desacelerar polling gradualmente se não há mudanças
-            if (consecutiveNoChanges > 3) {
-              pollInterval = Math.min(pollInterval * 1.5, 60000) // Máximo 1 minuto
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Erro ao verificar atualizações:', error)
-      }
-    }
-
-    // Verificar imediatamente
-    checkForUpdates()
-
-    // Configurar polling dinâmico
-    const interval = setInterval(checkForUpdates, pollInterval)
-
-    return () => clearInterval(interval)
-  }, [user])
-
-  const refreshUser = async () => {
-    try {
-      console.log('🔄 Recarregando dados do usuário...')
+    // Listener para mudanças de autenticação
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log(`🔐 [AUTH] Auth state changed: ${event}`)
       
-      const { data: { user: refreshedUser }, error } = await supabase.auth.getUser()
-      
-      if (error) {
-        console.error('Erro ao recarregar usuário:', error)
-        throw error
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        await refreshUser()
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null)
       }
+    })
 
-      if (refreshedUser) {
-        console.log('✅ Usuário recarregado:', refreshedUser.email)
-        console.log('📊 Plano atual:', refreshedUser.user_metadata?.subscription_plan)
-        console.log('💳 Créditos:', refreshedUser.user_metadata?.credits_remaining)
-        setUser(refreshedUser)
-      }
-    } catch (error) {
-      console.error('Erro ao recarregar usuário:', error)
-      throw error
+    return () => {
+      console.log('🛑 [AUTH] Removendo listener de auth')
+      subscription.unsubscribe()
     }
-  }
+  }, [refreshUser])
 
   const signIn = async (email: string, password: string) => {
     try {
       setLoading(true)
+      console.log(`🔐 [AUTH] Fazendo login: ${email}`)
+      
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       })
 
       if (error) {
-        if (error.message.includes('Invalid login credentials')) {
-          throw new Error('Email ou senha incorretos')
-        } else if (error.message.includes('Email not confirmed')) {
-          throw new Error('Email não confirmado. Verifique sua caixa de entrada.')
-        } else if (error.message.includes('Too many requests')) {
-          throw new Error('Muitas tentativas. Tente novamente em alguns minutos.')
-        } else {
-          throw new Error('Erro ao fazer login. Tente novamente.')
-        }
+        console.error('❌ [AUTH] Erro no login:', error)
+        throw error
       }
 
-      return { user: data.user, session: data.session }
+      console.log('✅ [AUTH] Login realizado com sucesso')
+      return data
     } catch (error) {
-      console.error('Erro no login:', error)
+      console.error('❌ [AUTH] Erro no signIn:', error)
       throw error
     } finally {
       setLoading(false)
@@ -149,6 +115,8 @@ export function useAuth() {
   const signUp = async (email: string, password: string, fullName?: string) => {
     try {
       setLoading(true)
+      console.log(`📝 [AUTH] Criando conta: ${email}`)
+      
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -158,26 +126,20 @@ export function useAuth() {
             subscription_plan: 'free',
             subscription_status: 'active',
             credits_remaining: 10,
-            total_credits_purchased: 0,
+            created_at: new Date().toISOString()
           }
         }
       })
 
       if (error) {
-        if (error.message.includes('User already registered')) {
-          throw new Error('Este email já está cadastrado')
-        } else if (error.message.includes('Password should be at least')) {
-          throw new Error('A senha deve ter pelo menos 6 caracteres')
-        } else if (error.message.includes('Invalid email')) {
-          throw new Error('Email inválido')
-        } else {
-          throw new Error('Erro ao criar conta. Tente novamente.')
-        }
+        console.error('❌ [AUTH] Erro no cadastro:', error)
+        throw error
       }
 
-      return { user: data.user, session: data.session }
+      console.log('✅ [AUTH] Cadastro realizado com sucesso')
+      return data
     } catch (error) {
-      console.error('Erro no cadastro:', error)
+      console.error('❌ [AUTH] Erro no signUp:', error)
       throw error
     } finally {
       setLoading(false)
@@ -186,43 +148,30 @@ export function useAuth() {
 
   const signOut = async () => {
     try {
-      setLoading(true)
+      console.log('🚪 [AUTH] Fazendo logout...')
+      
       const { error } = await supabase.auth.signOut()
-      if (error) throw error
-    } catch (error) {
-      console.error('Erro ao fazer logout:', error)
-      throw error
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const resetPassword = async (email: string) => {
-    try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`
-      })
-
+      
       if (error) {
-        console.error('Erro ao enviar email de recuperação:', error)
-        throw new Error('Erro ao enviar email de recuperação')
+        console.error('❌ [AUTH] Erro no logout:', error)
+        throw error
       }
 
-      console.log('Email de recuperação enviado')
+      console.log('✅ [AUTH] Logout realizado com sucesso')
+      setUser(null)
     } catch (error) {
-      console.error('Erro inesperado ao enviar email:', error)
+      console.error('❌ [AUTH] Erro no signOut:', error)
       throw error
     }
   }
 
   return {
     user,
-    session,
     loading,
+    isRefreshing,
     signIn,
     signUp,
     signOut,
-    resetPassword,
     refreshUser
   }
 } 
