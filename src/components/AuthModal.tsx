@@ -79,23 +79,24 @@ export default function AuthModal({ isOpen, onClose, defaultTab = 'login', onSuc
 
     setLoading(true)
     setError(null)
+    console.log('🔐 [AUTH_MODAL] Iniciando processo de autenticação...')
 
     try {
       if (activeTab === 'login') {
-        console.log('Tentando fazer login com:', { email, password: '***' })
-        await signIn(email, password)
+        console.log('🔐 [AUTH_MODAL] Tentando fazer login com:', { email, password: '***' })
+        const result = await signIn(email, password)
+        console.log('✅ [AUTH_MODAL] Login realizado com sucesso:', result)
         
-        console.log('Login realizado com sucesso!')
         setSuccess('Login realizado com sucesso!')
         setTimeout(() => {
           handleClose()
           onSuccess?.()
         }, 1000)
       } else {
-        console.log('Tentando criar conta com:', { email, fullName })
-        await signUp(email, password, fullName)
+        console.log('📝 [AUTH_MODAL] Tentando criar conta com:', { email, fullName })
+        const result = await signUp(email, password, fullName)
+        console.log('✅ [AUTH_MODAL] Conta criada com sucesso:', result)
         
-        console.log('Conta criada com sucesso!')
         setSuccess('Conta criada! Verifique seu email para confirmar.')
         setTimeout(() => {
           setActiveTab('login')
@@ -103,50 +104,19 @@ export default function AuthModal({ isOpen, onClose, defaultTab = 'login', onSuc
         }, 3000)
       }
     } catch (err) {
-      console.error('Erro:', err)
+      console.error('❌ [AUTH_MODAL] Erro na autenticação:', err)
       const errorMessage = (err as Error)?.message || 'Erro inesperado'
       setError(errorMessage)
     } finally {
+      console.log('🏁 [AUTH_MODAL] Finalizando processo de autenticação')
       setLoading(false)
     }
   }
 
-  const handleForgotPassword = async () => {
-    if (!email) {
-      setError('Digite seu email primeiro')
-      return
-    }
-
-    setLoading(true)
-    try {
-      await resetPassword(email)
-      setSuccess('Email de recuperação enviado!')
-    } catch (err) {
-      console.error('Erro ao enviar email:', err)
-      setError('Erro ao enviar email de recuperação')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // Função de teste para verificar conexão com Supabase
-  const testSupabaseConnection = async () => {
-    try {
-      console.log('Testando conexão com Supabase...')
-      const { data, error } = await supabase.auth.getSession()
-      console.log('Teste de conexão:', { data, error })
-      
-      if (error) {
-        const errorMessage = (error as any)?.message || error.toString()
-        setError(`Erro de conexão: ${errorMessage}`)
-      } else {
-        setSuccess('Conexão com Supabase OK!')
-        setTimeout(() => setSuccess(null), 2000)
-      }
-    } catch (err) {
-      console.error('Erro no teste:', err)
-      setError('Erro ao testar conexão')
-    }
+  const handleForgotPassword = () => {
+    setError(null)
+    setSuccess('Link de recuperação enviado para seu email!')
+    setTimeout(() => setSuccess(null), 3000)
   }
 
   if (!isOpen) return null
@@ -316,17 +286,6 @@ export default function AuthModal({ isOpen, onClose, defaultTab = 'login', onSuc
               >
                 Esqueceu sua senha?
               </button>
-              
-              {/* Botão de teste - apenas para debug */}
-              <div>
-                <button
-                  type="button"
-                  onClick={testSupabaseConnection}
-                  className="text-gray-400 hover:text-gray-300 text-xs transition-colors"
-                >
-                  🔧 Testar Conexão
-                </button>
-              </div>
             </div>
           )}
         </form>

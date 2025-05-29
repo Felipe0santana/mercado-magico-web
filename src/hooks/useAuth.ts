@@ -67,25 +67,95 @@ export function useAuth() {
   useEffect(() => {
     console.log('🚀 [AUTH] Inicializando useAuth...')
     
+    let mounted = true
+    
+    // Função para carregar usuário inicial
+    const loadInitialUser = async () => {
+      try {
+        console.log('🔄 [AUTH] Carregando usuário inicial...')
+        
+        const { data: { user: authUser }, error: authError } = await supabase.auth.getUser()
+        
+        if (!mounted) return
+        
+        if (authError) {
+          console.error('❌ [AUTH] Erro ao buscar usuário:', authError)
+          setUser(null)
+          setLoading(false)
+          return
+        }
+
+        if (!authUser) {
+          console.log('⚠️ [AUTH] Usuário não autenticado')
+          setUser(null)
+          setLoading(false)
+          return
+        }
+
+        const userProfile: UserProfile = {
+          id: authUser.id,
+          email: authUser.email || '',
+          subscription_plan: authUser.user_metadata?.subscription_plan || 'free',
+          subscription_status: authUser.user_metadata?.subscription_status || 'inactive',
+          credits_remaining: authUser.user_metadata?.credits_remaining ?? 10,
+          updated_at: authUser.user_metadata?.updated_at,
+          force_refresh: authUser.user_metadata?.force_refresh
+        }
+
+        console.log('✅ [AUTH] Usuário carregado:', {
+          email: userProfile.email,
+          plan: userProfile.subscription_plan,
+          credits: userProfile.credits_remaining
+        })
+
+        if (mounted) {
+          setUser(userProfile)
+          setLoading(false)
+        }
+      } catch (error) {
+        console.error('❌ [AUTH] Erro ao carregar usuário inicial:', error)
+        if (mounted) {
+          setUser(null)
+          setLoading(false)
+        }
+      }
+    }
+
     // Carregar usuário inicial
-    refreshUser().finally(() => setLoading(false))
+    loadInitialUser()
 
     // Listener para mudanças de autenticação
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log(`🔐 [AUTH] Auth state changed: ${event}`)
       
+      if (!mounted) return
+      
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-        await refreshUser()
+        if (session?.user) {
+          const userProfile: UserProfile = {
+            id: session.user.id,
+            email: session.user.email || '',
+            subscription_plan: session.user.user_metadata?.subscription_plan || 'free',
+            subscription_status: session.user.user_metadata?.subscription_status || 'inactive',
+            credits_remaining: session.user.user_metadata?.credits_remaining ?? 10,
+            updated_at: session.user.user_metadata?.updated_at,
+            force_refresh: session.user.user_metadata?.force_refresh
+          }
+          setUser(userProfile)
+        }
+        setLoading(false)
       } else if (event === 'SIGNED_OUT') {
         setUser(null)
+        setLoading(false)
       }
     })
 
     return () => {
+      mounted = false
       console.log('🛑 [AUTH] Removendo listener de auth')
       subscription.unsubscribe()
     }
-  }, [refreshUser])
+  }, [])
 
   const signIn = async (email: string, password: string) => {
     try {
