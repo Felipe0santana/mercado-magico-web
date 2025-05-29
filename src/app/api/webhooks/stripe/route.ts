@@ -142,47 +142,78 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       return
     }
 
-    // Buscar usuário diretamente por email usando RPC ou query simples
-    const { data: userData, error: userError } = await supabaseAdmin
-      .from('auth.users')
-      .select('id, email, user_metadata')
-      .eq('email', email)
-      .single()
-
-    if (userError && userError.code !== 'PGRST116') {
-      console.error('❌ Erro ao buscar usuário:', userError)
-      return
-    }
-
-    if (!userData) {
-      console.log(`👤 Usuário ${email} não encontrado no banco`)
-      // Para usuários não encontrados, vamos tentar uma abordagem diferente
-      // Usar a API de admin para buscar por email
-      try {
-        const { data: authUsers, error: listError } = await supabaseAdmin.auth.admin.listUsers()
+    // Usar query SQL direta para buscar usuário por email
+    try {
+      // Buscar usuário usando query SQL direta
+      const { data: users, error: queryError } = await supabaseAdmin
+        .rpc('get_user_by_email', { user_email: email })
+      
+      if (queryError) {
+        console.error('❌ Erro ao buscar usuário:', queryError)
         
-        if (listError) {
-          console.error('❌ Erro ao listar usuários:', listError)
+        // Se a função RPC não existir, tentar criar usuário diretamente
+        console.log(`👤 Criando novo usuário para ${email}`)
+        const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
+          email,
+          email_confirm: true,
+          user_metadata: {
+            full_name: email.split('@')[0],
+            subscription_plan: plan,
+            subscription_status: 'active',
+            credits_remaining: credits,
+            total_credits_purchased: credits === -1 ? 0 : credits,
+            stripe_customer_id: session.customer,
+            last_payment_amount: amount,
+            last_payment_date: new Date().toISOString(),
+            created_via_stripe: true,
+            updated_at: new Date().toISOString()
+          }
+        })
+
+        if (createError) {
+          console.error('❌ Erro ao criar usuário:', createError)
           return
         }
 
-        const user = authUsers?.users?.find(u => u.email === email)
-        
-        if (!user) {
-          console.log(`👤 Usuário ${email} não encontrado, mas pagamento processado. Pode ser necessário criar conta manualmente.`)
-          return
-        }
-
-        // Atualizar usuário encontrado
-        await updateUserPlan(user.id, plan, credits, session, amount)
-        
-      } catch (adminError) {
-        console.error('❌ Erro na busca admin:', adminError)
+        console.log(`✅ Usuário ${email} criado com plano ${plan} e ${credits === -1 ? 'créditos ilimitados' : credits + ' créditos'}`)
         return
       }
-    } else {
-      // Usuário encontrado, atualizar diretamente
-      await updateUserPlan(userData.id, plan, credits, session, amount)
+
+      if (users && users.length > 0) {
+        // Usuário encontrado, atualizar
+        const userId = users[0].id
+        await updateUserPlan(userId, plan, credits, session, amount)
+      } else {
+        console.log(`👤 Usuário ${email} não encontrado. Criando...`)
+        
+        // Criar usuário se não existir
+        const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
+          email,
+          email_confirm: true,
+          user_metadata: {
+            full_name: email.split('@')[0],
+            subscription_plan: plan,
+            subscription_status: 'active',
+            credits_remaining: credits,
+            total_credits_purchased: credits === -1 ? 0 : credits,
+            stripe_customer_id: session.customer,
+            last_payment_amount: amount,
+            last_payment_date: new Date().toISOString(),
+            created_via_stripe: true,
+            updated_at: new Date().toISOString()
+          }
+        })
+
+        if (createError) {
+          console.error('❌ Erro ao criar usuário:', createError)
+          return
+        }
+
+        console.log(`✅ Usuário ${email} criado com plano ${plan} e ${credits === -1 ? 'créditos ilimitados' : credits + ' créditos'}`)
+      }
+
+    } catch (error) {
+      console.error('❌ Erro geral ao processar usuário:', error)
     }
 
   } catch (error) {
