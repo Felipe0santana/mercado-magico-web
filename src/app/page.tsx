@@ -19,14 +19,10 @@ export default function Home() {
     setIsHydrated(true)
   }, [])
 
-  // Marcar auth como resolvida quando loading terminar
+  // Controlar quando a autenticação foi resolvida
   useEffect(() => {
     if (isHydrated && !authLoading) {
-      // Pequeno delay para garantir estabilidade
-      const timer = setTimeout(() => {
-        setAuthResolved(true)
-      }, 100)
-      return () => clearTimeout(timer)
+      setAuthResolved(true)
     }
   }, [isHydrated, authLoading])
 

@@ -92,6 +92,8 @@ export function useAuth() {
           return
         }
 
+        console.log('✅ [AUTH] Usuário encontrado:', authUser.email)
+        
         const userProfile: UserProfile = {
           id: authUser.id,
           email: authUser.email || '',
@@ -101,19 +103,12 @@ export function useAuth() {
           updated_at: authUser.user_metadata?.updated_at,
           force_refresh: authUser.user_metadata?.force_refresh
         }
-
-        console.log('✅ [AUTH] Usuário carregado:', {
-          email: userProfile.email,
-          plan: userProfile.subscription_plan,
-          credits: userProfile.credits_remaining
-        })
-
-        if (mounted) {
-          setUser(userProfile)
-          setLoading(false)
-        }
+        
+        setUser(userProfile)
+        setLoading(false)
+        
       } catch (error) {
-        console.error('❌ [AUTH] Erro ao carregar usuário inicial:', error)
+        console.error('❌ [AUTH] Erro inesperado:', error)
         if (mounted) {
           setUser(null)
           setLoading(false)
@@ -124,14 +119,16 @@ export function useAuth() {
     // Carregar usuário inicial
     loadInitialUser()
 
-    // Listener para mudanças de autenticação
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log(`🔐 [AUTH] Auth state changed: ${event}`)
-      
-      if (!mounted) return
-      
-      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-        if (session?.user) {
+    // Listener para mudanças de auth
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        console.log('🔄 [AUTH] Mudança de estado:', event, session?.user?.email || 'sem usuário')
+        
+        if (!mounted) return
+        
+        if (event === 'SIGNED_IN' && session?.user) {
+          console.log('✅ [AUTH] Login detectado:', session.user.email)
+          
           const userProfile: UserProfile = {
             id: session.user.id,
             email: session.user.email || '',
@@ -141,18 +138,37 @@ export function useAuth() {
             updated_at: session.user.user_metadata?.updated_at,
             force_refresh: session.user.user_metadata?.force_refresh
           }
+          
           setUser(userProfile)
+          setLoading(false)
+        } else if (event === 'SIGNED_OUT') {
+          console.log('👋 [AUTH] Logout detectado')
+          setUser(null)
+          setLoading(false)
+        } else if (event === 'TOKEN_REFRESHED' && session?.user) {
+          console.log('🔄 [AUTH] Token atualizado:', session.user.email)
+          
+          const userProfile: UserProfile = {
+            id: session.user.id,
+            email: session.user.email || '',
+            subscription_plan: session.user.user_metadata?.subscription_plan || 'free',
+            subscription_status: session.user.user_metadata?.subscription_status || 'inactive',
+            credits_remaining: session.user.user_metadata?.credits_remaining ?? 10,
+            updated_at: session.user.user_metadata?.updated_at,
+            force_refresh: session.user.user_metadata?.force_refresh
+          }
+          
+          setUser(userProfile)
+          setLoading(false)
+        } else {
+          // Para qualquer outro evento, garantir que loading seja false
+          setLoading(false)
         }
-        setLoading(false)
-      } else if (event === 'SIGNED_OUT') {
-        setUser(null)
-        setLoading(false)
       }
-    })
+    )
 
     return () => {
       mounted = false
-      console.log('🛑 [AUTH] Removendo listener de auth')
       subscription.unsubscribe()
     }
   }, [])
