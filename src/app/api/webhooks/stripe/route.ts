@@ -129,7 +129,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
 
     if (!email) {
       console.error('❌ Email do cliente não encontrado')
-      return NextResponse.json({ error: 'Email não encontrado' }, { status: 400 })
+      return
     }
 
     // Mapear valor para plano e créditos
@@ -139,84 +139,98 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
 
     if (!supabaseAdmin) {
       console.error('❌ Cliente admin não configurado')
-      return NextResponse.json({ error: 'Cliente admin não configurado' }, { status: 500 })
+      return
     }
 
-    // Buscar usuário por email
-    const { data: users, error: listError } = await supabaseAdmin.auth.admin.listUsers()
-    
-    if (listError) {
-      console.error('❌ Erro ao listar usuários:', listError)
-      return NextResponse.json({ error: 'Erro ao buscar usuários' }, { status: 500 })
+    // Buscar usuário diretamente por email usando RPC ou query simples
+    const { data: userData, error: userError } = await supabaseAdmin
+      .from('auth.users')
+      .select('id, email, user_metadata')
+      .eq('email', email)
+      .single()
+
+    if (userError && userError.code !== 'PGRST116') {
+      console.error('❌ Erro ao buscar usuário:', userError)
+      return
     }
 
-    const user = users?.users?.find(u => u.email === email)
-
-    if (!user) {
-      console.log(`👤 Usuário ${email} não encontrado, criando...`)
-      
-      // Criar usuário se não existir
-      const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
-        email,
-        email_confirm: true,
-        user_metadata: {
-          full_name: email.split('@')[0],
-          subscription_plan: plan,
-          subscription_status: 'active',
-          credits_remaining: credits,
-          total_credits_purchased: credits === -1 ? 0 : credits,
-          stripe_customer_id: session.customer,
-          last_payment_amount: amount,
-          last_payment_date: new Date().toISOString(),
-          created_via_stripe: true,
-          updated_at: new Date().toISOString()
+    if (!userData) {
+      console.log(`👤 Usuário ${email} não encontrado no banco`)
+      // Para usuários não encontrados, vamos tentar uma abordagem diferente
+      // Usar a API de admin para buscar por email
+      try {
+        const { data: authUsers, error: listError } = await supabaseAdmin.auth.admin.listUsers()
+        
+        if (listError) {
+          console.error('❌ Erro ao listar usuários:', listError)
+          return
         }
-      })
 
-      if (createError) {
-        console.error('❌ Erro ao criar usuário:', createError)
-        return NextResponse.json({ error: 'Erro ao criar usuário' }, { status: 500 })
+        const user = authUsers?.users?.find(u => u.email === email)
+        
+        if (!user) {
+          console.log(`👤 Usuário ${email} não encontrado, mas pagamento processado. Pode ser necessário criar conta manualmente.`)
+          return
+        }
+
+        // Atualizar usuário encontrado
+        await updateUserPlan(user.id, plan, credits, session, amount)
+        
+      } catch (adminError) {
+        console.error('❌ Erro na busca admin:', adminError)
+        return
       }
-
-      console.log(`✅ Usuário ${email} criado com plano ${plan} e ${credits === -1 ? 'créditos ilimitados' : credits + ' créditos'}`)
-      
-      return NextResponse.json({ 
-        success: true, 
-        message: 'Usuário criado e plano ativado',
-        user: { email, plan, credits }
-      })
+    } else {
+      // Usuário encontrado, atualizar diretamente
+      await updateUserPlan(userData.id, plan, credits, session, amount)
     }
 
-    // Atualizar usuário existente
-    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
+  } catch (error) {
+    console.error('❌ Erro ao processar checkout completed:', error)
+  }
+}
+
+// Função auxiliar para atualizar plano do usuário
+async function updateUserPlan(userId: string, plan: string, credits: number, session: Stripe.Checkout.Session, amount: number) {
+  try {
+    const updateData = {
       user_metadata: {
-        ...user.user_metadata,
         subscription_plan: plan,
         subscription_status: 'active',
         credits_remaining: credits,
-        total_credits_purchased: (user.user_metadata?.total_credits_purchased || 0) + (credits === -1 ? 0 : credits),
         stripe_customer_id: session.customer,
         last_payment_amount: amount,
         last_payment_date: new Date().toISOString(),
         updated_at: new Date().toISOString()
       }
-    })
+    }
+
+    const { error: updateError } = await supabaseAdmin!.auth.admin.updateUserById(userId, updateData)
 
     if (updateError) {
       console.error('❌ Erro ao atualizar usuário:', updateError)
-      return NextResponse.json({ error: 'Erro ao atualizar usuário' }, { status: 500 })
+      return
     }
 
-    console.log(`✅ Plano do usuário ${email} atualizado para ${plan} com ${credits === -1 ? 'créditos ilimitados' : credits + ' créditos'}`)
+    console.log(`✅ Plano do usuário ${userId} atualizado para ${plan} com ${credits === -1 ? 'créditos ilimitados' : credits + ' créditos'}`)
+    
+    // Forçar uma atualização adicional para garantir que os dados sejam persistidos
+    setTimeout(async () => {
+      try {
+        await supabaseAdmin!.auth.admin.updateUserById(userId, {
+          user_metadata: {
+            ...updateData.user_metadata,
+            force_refresh: new Date().getTime()
+          }
+        })
+        console.log(`🔄 Refresh forçado para usuário ${userId}`)
+      } catch (refreshError) {
+        console.error('⚠️ Erro no refresh forçado:', refreshError)
+      }
+    }, 1000)
 
-    return NextResponse.json({ 
-      success: true, 
-      message: 'Plano atualizado com sucesso',
-      user: { email, plan, credits }
-    })
   } catch (error) {
-    console.error('❌ Erro ao processar checkout completed:', error)
-    return NextResponse.json({ error: 'Erro ao processar checkout completed' }, { status: 500 })
+    console.error('❌ Erro ao atualizar plano do usuário:', error)
   }
 }
 

@@ -41,10 +41,13 @@ export function useAuth() {
     return () => subscription.unsubscribe()
   }, [])
 
-  // Polling para verificar atualizações do usuário a cada 30 segundos
+  // Polling para verificar atualizações do usuário com frequência adaptativa
   useEffect(() => {
     if (!user) return
 
+    let pollInterval = 10000 // Começar com 10 segundos
+    let consecutiveNoChanges = 0
+    
     const checkForUpdates = async () => {
       try {
         const { data: { user: updatedUser }, error } = await supabase.auth.getUser()
@@ -54,9 +57,28 @@ export function useAuth() {
           return
         }
 
-        if (updatedUser && updatedUser.updated_at !== user.updated_at) {
-          console.log('🔄 Usuário atualizado detectado, recarregando...')
-          setUser(updatedUser)
+        if (updatedUser) {
+          // Verificar se houve mudanças significativas
+          const hasChanges = 
+            updatedUser.updated_at !== user.updated_at ||
+            updatedUser.user_metadata?.subscription_plan !== user.user_metadata?.subscription_plan ||
+            updatedUser.user_metadata?.credits_remaining !== user.user_metadata?.credits_remaining ||
+            updatedUser.user_metadata?.subscription_status !== user.user_metadata?.subscription_status
+
+          if (hasChanges) {
+            console.log('🔄 Mudanças detectadas no usuário, atualizando...')
+            console.log('📊 Plano:', updatedUser.user_metadata?.subscription_plan)
+            console.log('💳 Créditos:', updatedUser.user_metadata?.credits_remaining)
+            setUser(updatedUser)
+            consecutiveNoChanges = 0
+            pollInterval = 5000 // Acelerar polling após mudança
+          } else {
+            consecutiveNoChanges++
+            // Desacelerar polling gradualmente se não há mudanças
+            if (consecutiveNoChanges > 3) {
+              pollInterval = Math.min(pollInterval * 1.5, 60000) // Máximo 1 minuto
+            }
+          }
         }
       } catch (error) {
         console.error('Erro ao verificar atualizações:', error)
@@ -66,8 +88,8 @@ export function useAuth() {
     // Verificar imediatamente
     checkForUpdates()
 
-    // Configurar polling a cada 30 segundos
-    const interval = setInterval(checkForUpdates, 30000)
+    // Configurar polling dinâmico
+    const interval = setInterval(checkForUpdates, pollInterval)
 
     return () => clearInterval(interval)
   }, [user])
@@ -85,6 +107,8 @@ export function useAuth() {
 
       if (refreshedUser) {
         console.log('✅ Usuário recarregado:', refreshedUser.email)
+        console.log('📊 Plano atual:', refreshedUser.user_metadata?.subscription_plan)
+        console.log('💳 Créditos:', refreshedUser.user_metadata?.credits_remaining)
         setUser(refreshedUser)
       }
     } catch (error) {
