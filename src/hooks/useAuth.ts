@@ -181,14 +181,13 @@ export function useAuth() {
 
       if (error) {
         console.error('Erro ao enviar email de recuperação:', error)
-        return { error }
+        throw new Error('Erro ao enviar email de recuperação')
       }
 
       console.log('Email de recuperação enviado')
-      return { error: null }
     } catch (error) {
       console.error('Erro inesperado ao enviar email:', error)
-      return { error }
+      throw error
     }
   }
 

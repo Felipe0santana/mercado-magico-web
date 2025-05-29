@@ -83,57 +83,29 @@ export default function AuthModal({ isOpen, onClose, defaultTab = 'login', onSuc
     try {
       if (activeTab === 'login') {
         console.log('Tentando fazer login com:', { email, password: '***' })
-        const { error } = await signIn(email, password)
+        await signIn(email, password)
         
-        if (error) {
-          console.error('Erro de login detalhado:', error)
-          
-          // Mensagens de erro mais específicas
-          const errorMessage = (error as any)?.message || error.toString()
-          if (errorMessage.includes('Invalid login credentials')) {
-            setError('Email ou senha incorretos. Verifique suas credenciais.')
-          } else if (errorMessage.includes('Email not confirmed')) {
-            setError('Email não confirmado. Verifique sua caixa de entrada.')
-          } else if (errorMessage.includes('Too many requests')) {
-            setError('Muitas tentativas. Aguarde alguns minutos.')
-          } else {
-            setError(`Erro de login: ${errorMessage}`)
-          }
-        } else {
-          console.log('Login realizado com sucesso!')
-          setSuccess('Login realizado com sucesso!')
-          setTimeout(() => {
-            handleClose()
-            onSuccess?.()
-          }, 1000)
-        }
+        console.log('Login realizado com sucesso!')
+        setSuccess('Login realizado com sucesso!')
+        setTimeout(() => {
+          handleClose()
+          onSuccess?.()
+        }, 1000)
       } else {
         console.log('Tentando criar conta com:', { email, fullName })
-        const { error } = await signUp(email, password, fullName)
+        await signUp(email, password, fullName)
         
-        if (error) {
-          console.error('Erro de registro detalhado:', error)
-          
-          const errorMessage = (error as any)?.message || error.toString()
-          if (errorMessage.includes('already registered')) {
-            setError('Este email já está cadastrado. Tente fazer login.')
-          } else if (errorMessage.includes('Password should be at least')) {
-            setError('A senha deve ter pelo menos 6 caracteres.')
-          } else {
-            setError(`Erro ao criar conta: ${errorMessage}`)
-          }
-        } else {
-          console.log('Conta criada com sucesso!')
-          setSuccess('Conta criada! Verifique seu email para confirmar.')
-          setTimeout(() => {
-            setActiveTab('login')
-            setSuccess(null)
-          }, 3000)
-        }
+        console.log('Conta criada com sucesso!')
+        setSuccess('Conta criada! Verifique seu email para confirmar.')
+        setTimeout(() => {
+          setActiveTab('login')
+          setSuccess(null)
+        }, 3000)
       }
     } catch (err) {
-      console.error('Erro inesperado:', err)
-      setError('Erro inesperado. Tente novamente.')
+      console.error('Erro:', err)
+      const errorMessage = (err as Error)?.message || 'Erro inesperado'
+      setError(errorMessage)
     } finally {
       setLoading(false)
     }
@@ -146,14 +118,15 @@ export default function AuthModal({ isOpen, onClose, defaultTab = 'login', onSuc
     }
 
     setLoading(true)
-    const { error } = await resetPassword(email)
-    
-    if (error) {
-      setError('Erro ao enviar email de recuperação')
-    } else {
+    try {
+      await resetPassword(email)
       setSuccess('Email de recuperação enviado!')
+    } catch (err) {
+      console.error('Erro ao enviar email:', err)
+      setError('Erro ao enviar email de recuperação')
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   // Função de teste para verificar conexão com Supabase
