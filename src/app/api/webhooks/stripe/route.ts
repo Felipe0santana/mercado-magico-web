@@ -18,10 +18,20 @@ const cliWebhookSecret = process.env.STRIPE_CLI_WEBHOOK_SECRET || 'whsec_9d104f1
 
 // Mapear valores do Stripe para planos
 function mapStripeAmountToPlan(amount: number) {
+  console.log(`💰 Mapeando valor: R$ ${amount/100}`)
   if (amount >= 2999) return { plan: 'premium', credits: -1 }
   if (amount >= 1999) return { plan: 'pro', credits: 200 }
   if (amount >= 999) return { plan: 'plus', credits: 50 }
   return { plan: 'free', credits: 10 }
+}
+
+// Função para determinar o melhor plano entre dois
+function getBetterPlan(currentPlan: string, newPlan: string) {
+  const planHierarchy = { 'free': 0, 'plus': 1, 'pro': 2, 'premium': 3 }
+  const currentLevel = planHierarchy[currentPlan as keyof typeof planHierarchy] || 0
+  const newLevel = planHierarchy[newPlan as keyof typeof planHierarchy] || 0
+  
+  return newLevel >= currentLevel ? newPlan : currentPlan
 }
 
 export async function POST(request: NextRequest) {
@@ -117,144 +127,99 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       return
     }
 
-    // NOVA ABORDAGEM: Usar SQL direto para buscar e atualizar
-    try {
-      // 1. Buscar usuário usando SQL direto
-      const { data: users, error: searchError } = await supabaseAdmin
-        .rpc('get_user_by_email_simple', { email_param: email })
-
-      if (searchError || !users || users.length === 0) {
-        console.log(`👤 Usuário ${email} não encontrado ou erro na busca. Tentando abordagem alternativa...`)
-        
-        // 2. Se não encontrar, usar updateUserById com todos os IDs possíveis
-        // Isso é uma abordagem de força bruta, mas funciona
-        await updateUserByEmailForce(email, plan, credits, session, amount)
-      } else {
-        // 3. Usuário encontrado, atualizar diretamente
-        const userId = users[0].id
-        console.log(`👤 Usuário ${email} encontrado (ID: ${userId}), atualizando...`)
-        await updateUserById(userId, plan, credits, session, amount)
-      }
-
-    } catch (error) {
-      console.error('❌ Erro ao processar usuário:', error)
-      
-      // Como último recurso, tentar força bruta
-      console.log('🔄 Tentando força bruta como último recurso...')
-      await updateUserByEmailForce(email, plan, credits, session, amount)
-    }
+    // Buscar usuário usando força bruta
+    await updateUserWithBestPlan(email, plan, credits, session, amount)
 
   } catch (error) {
     console.error('❌ Erro ao processar checkout completed:', error)
   }
 }
 
-// Função para atualizar usuário por ID
-async function updateUserById(userId: string, plan: string, credits: number, session: Stripe.Checkout.Session, amount: number) {
+// Função inteligente para atualizar usuário sempre com o melhor plano
+async function updateUserWithBestPlan(email: string, newPlan: string, newCredits: number, session: Stripe.Checkout.Session, amount: number) {
   try {
+    console.log(`🔄 Buscando usuário ${email} para atualização inteligente...`)
+    
+    // Tentar buscar usuário via listUsers
+    let userId: string | null = null
+    let currentPlan = 'free'
+    let currentCredits = 10
+    
+    try {
+      const { data: authUsers } = await supabaseAdmin!.auth.admin.listUsers({ page: 1, perPage: 100 })
+      if (authUsers?.users) {
+        const user = authUsers.users.find(u => u.email === email)
+        if (user) {
+          userId = user.id
+          currentPlan = user.user_metadata?.subscription_plan || 'free'
+          currentCredits = user.user_metadata?.credits_remaining || 10
+          console.log(`👤 Usuário encontrado: ${email} (${currentPlan}, ${currentCredits} créditos)`)
+        }
+      }
+    } catch (error) {
+      console.log('⚠️ Erro ao buscar usuário via listUsers:', error)
+    }
+
+    // Determinar o melhor plano
+    const bestPlan = getBetterPlan(currentPlan, newPlan)
+    const finalCredits = bestPlan === 'premium' ? -1 : 
+                        bestPlan === 'pro' ? 200 : 
+                        bestPlan === 'plus' ? 50 : 10
+
+    console.log(`🎯 Plano atual: ${currentPlan} → Novo: ${newPlan} → Melhor: ${bestPlan} (${finalCredits === -1 ? 'ilimitados' : finalCredits} créditos)`)
+
     const updateData = {
       user_metadata: {
-        subscription_plan: plan,
+        subscription_plan: bestPlan,
         subscription_status: 'active',
-        credits_remaining: credits,
+        credits_remaining: finalCredits,
         stripe_customer_id: session.customer,
         last_payment_amount: amount,
         last_payment_date: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         webhook_processed: true,
-        force_refresh: new Date().getTime()
+        force_refresh: new Date().getTime(),
+        payment_history: JSON.stringify([
+          { plan: newPlan, amount, date: new Date().toISOString() }
+        ])
       }
     }
 
-    const { error: updateError } = await supabaseAdmin!.auth.admin.updateUserById(userId, updateData)
+    if (userId) {
+      // Atualizar usuário existente
+      const { error: updateError } = await supabaseAdmin!.auth.admin.updateUserById(userId, updateData)
+      
+      if (updateError) {
+        console.error('❌ Erro ao atualizar usuário:', updateError)
+        return false
+      }
+      
+      console.log(`✅ Usuário ${email} atualizado para ${bestPlan} com ${finalCredits === -1 ? 'créditos ilimitados' : finalCredits + ' créditos'}`)
+      return true
+    } else {
+      // Criar novo usuário
+      console.log(`👤 Criando novo usuário ${email}...`)
+      const { data: newUser, error: createError } = await supabaseAdmin!.auth.admin.createUser({
+        email,
+        email_confirm: true,
+        user_metadata: {
+          full_name: email.split('@')[0],
+          ...updateData.user_metadata,
+          created_via_stripe: true
+        }
+      })
 
-    if (updateError) {
-      console.error('❌ Erro ao atualizar usuário:', updateError)
-      return false
+      if (createError) {
+        console.error('❌ Erro ao criar usuário:', createError)
+        return false
+      }
+
+      console.log(`✅ Usuário ${email} criado com ${bestPlan} e ${finalCredits === -1 ? 'créditos ilimitados' : finalCredits + ' créditos'}`)
+      return true
     }
 
-    console.log(`✅ Usuário ${userId} atualizado para ${plan} com ${credits === -1 ? 'créditos ilimitados' : credits + ' créditos'}`)
-    return true
-
   } catch (error) {
-    console.error('❌ Erro ao atualizar usuário por ID:', error)
+    console.error('❌ Erro na atualização inteligente:', error)
     return false
   }
 }
-
-// Função de força bruta para atualizar usuário por email
-async function updateUserByEmailForce(email: string, plan: string, credits: number, session: Stripe.Checkout.Session, amount: number) {
-  try {
-    console.log(`🔄 Iniciando força bruta para ${email}...`)
-    
-    // Tentar múltiplas abordagens
-    const approaches = [
-      // Abordagem 1: Tentar listUsers em lotes pequenos
-      async () => {
-        try {
-          const { data: authUsers } = await supabaseAdmin!.auth.admin.listUsers({ page: 1, perPage: 100 })
-          if (authUsers?.users) {
-            const user = authUsers.users.find(u => u.email === email)
-            if (user) {
-              console.log(`🎯 Usuário encontrado via listUsers: ${user.id}`)
-              return await updateUserById(user.id, plan, credits, session, amount)
-            }
-          }
-          return false
-        } catch (error) {
-          console.log('⚠️ Abordagem listUsers falhou:', error)
-          return false
-        }
-      },
-
-      // Abordagem 2: Criar usuário se não existir
-      async () => {
-        try {
-          console.log(`👤 Tentando criar usuário ${email}...`)
-          const { data: newUser, error: createError } = await supabaseAdmin!.auth.admin.createUser({
-            email,
-            email_confirm: true,
-            user_metadata: {
-              full_name: email.split('@')[0],
-              subscription_plan: plan,
-              subscription_status: 'active',
-              credits_remaining: credits,
-              stripe_customer_id: session.customer,
-              last_payment_amount: amount,
-              last_payment_date: new Date().toISOString(),
-              created_via_stripe: true,
-              updated_at: new Date().toISOString(),
-              webhook_processed: true
-            }
-          })
-
-          if (createError) {
-            console.log('⚠️ Criação falhou (usuário pode já existir):', createError.message)
-            return false
-          }
-
-          console.log(`✅ Usuário ${email} criado com sucesso via webhook`)
-          return true
-        } catch (error) {
-          console.log('⚠️ Abordagem criação falhou:', error)
-          return false
-        }
-      }
-    ]
-
-    // Tentar cada abordagem
-    for (let i = 0; i < approaches.length; i++) {
-      console.log(`🔄 Tentando abordagem ${i + 1}...`)
-      const success = await approaches[i]()
-      if (success) {
-        console.log(`✅ Sucesso na abordagem ${i + 1}!`)
-        return
-      }
-    }
-
-    console.error(`❌ Todas as abordagens falharam para ${email}`)
-
-  } catch (error) {
-    console.error('❌ Erro na força bruta:', error)
-  }
-} 
