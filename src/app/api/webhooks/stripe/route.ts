@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import Stripe from 'stripe'
 import { supabaseAdmin } from '@/lib/supabase'
 
+// WEBHOOK REALTIME INSTANTÂNEO - Deploy Test
 // Configurar Stripe
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY
 if (!stripeSecretKey) {
