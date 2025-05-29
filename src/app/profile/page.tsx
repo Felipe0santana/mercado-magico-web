@@ -64,7 +64,7 @@ interface UserStats {
 }
 
 export default function ProfilePage() {
-  const { user, signOut, loading: authLoading } = useAuth()
+  const { user, signOut, loading: authLoading, refreshUser } = useAuth()
   const router = useRouter()
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [stats, setStats] = useState<UserStats | null>(null)
@@ -136,12 +136,24 @@ export default function ProfilePage() {
       setRefreshing(true)
       console.log('🔄 Atualizando perfil manualmente...')
       
+      // Primeiro recarregar dados do usuário do Supabase
+      await refreshUser()
+      
+      // Aguardar um pouco para garantir que os dados foram atualizados
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      
+      // Depois recarregar perfil e estatísticas
       await loadUserProfile()
       await loadUserStats()
       
       console.log('✅ Perfil atualizado com sucesso!')
+      
+      // Mostrar notificação de sucesso
+      alert('Perfil atualizado com sucesso!')
+      
     } catch (error) {
       console.error('Erro ao atualizar perfil:', error)
+      alert('Erro ao atualizar perfil. Tente novamente.')
     } finally {
       setRefreshing(false)
     }

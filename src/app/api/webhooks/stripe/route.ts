@@ -14,7 +14,9 @@ const stripe = stripeSecretKey ? new Stripe(stripeSecretKey, {
   apiVersion: '2025-04-30.basil',
 }) : null
 
+// Webhook secrets - produção e CLI
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET
+const cliWebhookSecret = process.env.STRIPE_CLI_WEBHOOK_SECRET || 'whsec_9d104f15c71f8060969218e5e78948f82d374d9c7385048a47632d0b4382ea80'
 
 export async function POST(request: NextRequest) {
   console.log('🚀 Webhook do Stripe recebido')
@@ -31,24 +33,46 @@ export async function POST(request: NextRequest) {
     console.log('📝 Verificando assinatura do webhook...')
     console.log('📋 Headers recebidos:', Object.fromEntries(request.headers.entries()))
     
-    if (!signature || !webhookSecret) {
-      console.error('❌ Webhook signature ou secret não encontrado')
-      console.log('🔑 Webhook secret configurado:', !!webhookSecret)
-      console.log('✍️ Signature recebida:', !!signature)
+    if (!signature) {
+      console.error('❌ Webhook signature não encontrada')
       return NextResponse.json({ error: 'Webhook signature missing' }, { status: 400 })
     }
 
     let event: Stripe.Event
+    let secretUsed = ''
 
-    try {
-      event = stripe.webhooks.constructEvent(body, signature, webhookSecret)
-      console.log('✅ Assinatura do webhook verificada com sucesso')
-    } catch (err) {
-      console.error('❌ Erro na verificação do webhook:', err)
-      return NextResponse.json({ error: 'Webhook signature verification failed' }, { status: 400 })
+    // Tentar primeiro com o secret do CLI, depois com o de produção
+    const secretsToTry = [
+      { secret: cliWebhookSecret, name: 'CLI' },
+      { secret: webhookSecret, name: 'Production' }
+    ].filter(s => s.secret) // Filtrar apenas secrets que existem
+
+    let verificationError: Error | null = null
+
+    for (const { secret, name } of secretsToTry) {
+      if (!secret) continue
+      
+      try {
+        event = stripe.webhooks.constructEvent(body, signature, secret)
+        secretUsed = name
+        console.log(`✅ Assinatura verificada com sucesso usando secret ${name}`)
+        break
+      } catch (err) {
+        const error = err as Error
+        console.log(`⚠️ Falha na verificação com secret ${name}:`, error.message)
+        verificationError = error
+      }
     }
 
-    console.log(`📨 Evento recebido: ${event.type}`)
+    if (!event!) {
+      console.error('❌ Falha na verificação com todos os secrets disponíveis')
+      return NextResponse.json({ 
+        error: 'Webhook signature verification failed',
+        details: verificationError?.message || 'Unknown error'
+      }, { status: 400 })
+    }
+
+    console.log(`📨 Evento recebido: ${event.type} (verificado com ${secretUsed})`)
     console.log(`📊 Dados do evento:`, JSON.stringify(event.data.object, null, 2))
 
     // Processar diferentes tipos de eventos
@@ -82,10 +106,14 @@ export async function POST(request: NextRequest) {
     }
 
     console.log('✅ Webhook processado com sucesso')
-    return NextResponse.json({ received: true })
+    return NextResponse.json({ received: true, secret_used: secretUsed })
   } catch (error) {
-    console.error('❌ Erro no webhook:', error)
-    return NextResponse.json({ error: 'Webhook handler failed' }, { status: 500 })
+    const err = error as Error
+    console.error('❌ Erro no webhook:', err)
+    return NextResponse.json({ 
+      error: 'Webhook handler failed',
+      details: err.message 
+    }, { status: 500 })
   }
 }
 

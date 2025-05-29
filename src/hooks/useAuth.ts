@@ -31,7 +31,7 @@ export function useAuth() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        console.log('Auth state changed:', event, session?.user?.email)
+        console.log('🔄 Auth state changed:', event)
         setSession(session)
         setUser(session?.user ?? null)
         setLoading(false)
@@ -41,70 +41,120 @@ export function useAuth() {
     return () => subscription.unsubscribe()
   }, [])
 
+  // Polling para verificar atualizações do usuário a cada 30 segundos
+  useEffect(() => {
+    if (!user) return
+
+    const checkForUpdates = async () => {
+      try {
+        const { data: { user: updatedUser }, error } = await supabase.auth.getUser()
+        
+        if (error) {
+          console.error('Erro ao verificar atualizações:', error)
+          return
+        }
+
+        if (updatedUser && updatedUser.updated_at !== user.updated_at) {
+          console.log('🔄 Usuário atualizado detectado, recarregando...')
+          setUser(updatedUser)
+        }
+      } catch (error) {
+        console.error('Erro ao verificar atualizações:', error)
+      }
+    }
+
+    // Verificar imediatamente
+    checkForUpdates()
+
+    // Configurar polling a cada 30 segundos
+    const interval = setInterval(checkForUpdates, 30000)
+
+    return () => clearInterval(interval)
+  }, [user])
+
+  const refreshUser = async () => {
+    try {
+      console.log('🔄 Recarregando dados do usuário...')
+      
+      const { data: { user: refreshedUser }, error } = await supabase.auth.getUser()
+      
+      if (error) {
+        console.error('Erro ao recarregar usuário:', error)
+        throw error
+      }
+
+      if (refreshedUser) {
+        console.log('✅ Usuário recarregado:', refreshedUser.email)
+        setUser(refreshedUser)
+      }
+    } catch (error) {
+      console.error('Erro ao recarregar usuário:', error)
+      throw error
+    }
+  }
+
   const signIn = async (email: string, password: string) => {
     try {
       setLoading(true)
-      console.log('Tentando login com Supabase...')
-      
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password: password
+        email,
+        password,
       })
 
       if (error) {
-        console.error('Erro de login:', error)
-        return { error }
+        if (error.message.includes('Invalid login credentials')) {
+          throw new Error('Email ou senha incorretos')
+        } else if (error.message.includes('Email not confirmed')) {
+          throw new Error('Email não confirmado. Verifique sua caixa de entrada.')
+        } else if (error.message.includes('Too many requests')) {
+          throw new Error('Muitas tentativas. Tente novamente em alguns minutos.')
+        } else {
+          throw new Error('Erro ao fazer login. Tente novamente.')
+        }
       }
 
-      console.log('Login bem-sucedido:', data.user?.email)
-      return { error: null }
+      return { user: data.user, session: data.session }
     } catch (error) {
-      console.error('Erro inesperado no login:', error)
-      return { error }
+      console.error('Erro no login:', error)
+      throw error
     } finally {
       setLoading(false)
     }
   }
 
-  const signUp = async (email: string, password: string, fullName: string) => {
+  const signUp = async (email: string, password: string, fullName?: string) => {
     try {
       setLoading(true)
-      console.log('Criando conta via API personalizada...')
-      
-      // Usar API personalizada que funciona com função SQL
-      const response = await fetch('/api/register-user', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          email: email.trim(),
-          password: password,
-          fullName: fullName
-        })
-      })
-      
-      const result = await response.json()
-      
-      if (result.success) {
-        console.log('✅ Conta criada com sucesso!')
-        return { error: null }
-      } else {
-        console.error('❌ Erro no cadastro:', result.error)
-        
-        // Tratar diferentes tipos de erro
-        let errorMessage = result.error
-        if (result.details?.message?.includes('duplicate key')) {
-          errorMessage = 'Este email já está em uso'
-        } else if (result.details?.message?.includes('invalid email')) {
-          errorMessage = 'Email inválido'
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: fullName || email.split('@')[0],
+            subscription_plan: 'free',
+            subscription_status: 'active',
+            credits_remaining: 10,
+            total_credits_purchased: 0,
+          }
         }
-        
-        return { error: new Error(errorMessage) }
+      })
+
+      if (error) {
+        if (error.message.includes('User already registered')) {
+          throw new Error('Este email já está cadastrado')
+        } else if (error.message.includes('Password should be at least')) {
+          throw new Error('A senha deve ter pelo menos 6 caracteres')
+        } else if (error.message.includes('Invalid email')) {
+          throw new Error('Email inválido')
+        } else {
+          throw new Error('Erro ao criar conta. Tente novamente.')
+        }
       }
+
+      return { user: data.user, session: data.session }
     } catch (error) {
-      console.error('❌ Erro inesperado ao criar conta:', error)
-      return { error: new Error('Erro de conexão. Tente novamente.') }
+      console.error('Erro no cadastro:', error)
+      throw error
     } finally {
       setLoading(false)
     }
@@ -114,17 +164,10 @@ export function useAuth() {
     try {
       setLoading(true)
       const { error } = await supabase.auth.signOut()
-      
-      if (error) {
-        console.error('Erro ao fazer logout:', error)
-        return { error }
-      }
-
-      console.log('Logout realizado com sucesso')
-      return { error: null }
+      if (error) throw error
     } catch (error) {
-      console.error('Erro inesperado no logout:', error)
-      return { error }
+      console.error('Erro ao fazer logout:', error)
+      throw error
     } finally {
       setLoading(false)
     }
@@ -156,6 +199,7 @@ export function useAuth() {
     signIn,
     signUp,
     signOut,
-    resetPassword
+    resetPassword,
+    refreshUser
   }
 } 
