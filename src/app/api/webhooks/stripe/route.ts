@@ -142,16 +142,19 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       return
     }
 
-    // Usar query SQL direta para buscar usuário por email
+    // Buscar usuário diretamente na tabela auth.users
     try {
-      // Buscar usuário usando query SQL direta
+      // Buscar usuário usando query SQL direta na tabela auth.users
       const { data: users, error: queryError } = await supabaseAdmin
-        .rpc('get_user_by_email', { user_email: email })
+        .from('auth.users')
+        .select('id, email, raw_user_meta_data')
+        .eq('email', email)
+        .limit(1)
       
       if (queryError) {
         console.error('❌ Erro ao buscar usuário:', queryError)
         
-        // Se a função RPC não existir, tentar criar usuário diretamente
+        // Se falhar a busca, tentar criar usuário diretamente
         console.log(`👤 Criando novo usuário para ${email}`)
         const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
           email,
@@ -182,6 +185,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       if (users && users.length > 0) {
         // Usuário encontrado, atualizar
         const userId = users[0].id
+        console.log(`👤 Usuário ${email} encontrado (ID: ${userId}), atualizando plano...`)
         await updateUserPlan(userId, plan, credits, session, amount)
       } else {
         console.log(`👤 Usuário ${email} não encontrado. Criando...`)
