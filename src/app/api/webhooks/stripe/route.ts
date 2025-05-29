@@ -138,101 +138,157 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
 // Função inteligente para atualizar usuário sempre com o melhor plano
 async function updateUserWithBestPlan(email: string, newPlan: string, newCredits: number, session: Stripe.Checkout.Session, amount: number) {
   try {
-    console.log(`🔄 Processando pagamento para ${email}: ${newPlan} (R$ ${amount/100})`)
+    console.log(`🔄 [HYBRID] Processando pagamento para ${email}: ${newPlan} (R$ ${amount/100})`);
     
     if (!supabaseAdmin) {
-      console.error('❌ Cliente admin não configurado')
-      return false
+      console.error('❌ Cliente admin não configurado');
+      return false;
     }
 
-    // NOVA ABORDAGEM: Usar SQL direto para buscar e atualizar
+    let userId: string | null = null;
+    let currentPlan = 'free';
+    let userFound = false;
+
+    // ABORDAGEM HÍBRIDA: Tentar múltiplas estratégias
+    
+    // 1. Tentar listUsers() primeiro
     try {
-      // 1. Tentar buscar usuário usando SQL direto
-      const { data: users, error: searchError } = await supabaseAdmin
-        .from('auth.users')
-        .select('id, email, raw_user_meta_data')
-        .eq('email', email)
-        .single()
-
-      if (searchError && searchError.code !== 'PGRST116') {
-        console.error('❌ Erro ao buscar usuário:', searchError)
-        return false
-      }
-
-      if (users) {
-        // Usuário encontrado - atualizar
-        const currentPlan = users.raw_user_meta_data?.subscription_plan || 'free'
-        const bestPlan = getBetterPlan(currentPlan, newPlan)
-        const finalCredits = bestPlan === 'premium' ? -1 : 
-                            bestPlan === 'pro' ? 200 : 
-                            bestPlan === 'plus' ? 50 : 10
-
-        console.log(`👤 Usuário encontrado: ${currentPlan} → ${bestPlan}`)
-
-        const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(users.id, {
-          user_metadata: {
-            ...users.raw_user_meta_data,
-            subscription_plan: bestPlan,
-            subscription_status: 'active',
-            credits_remaining: finalCredits,
-            stripe_customer_id: session.customer,
-            last_payment_amount: amount,
-            last_payment_date: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            webhook_processed: true,
-            force_refresh: new Date().getTime()
-          }
-        })
-
-        if (updateError) {
-          console.error('❌ Erro ao atualizar usuário:', updateError)
-          return false
+      console.log('🔍 [HYBRID] Tentando listUsers()...');
+      const { data: authUsers, error: listError } = await supabaseAdmin.auth.admin.listUsers();
+      
+      if (!listError && authUsers?.users) {
+        const user = authUsers.users.find((u: any) => u.email === email);
+        if (user) {
+          userId = user.id;
+          currentPlan = user.user_metadata?.subscription_plan || 'free';
+          userFound = true;
+          console.log(`✅ [HYBRID] Usuário encontrado via listUsers: ${email} (${currentPlan})`);
         }
-
-        console.log(`✅ Usuário ${email} atualizado para ${bestPlan} com ${finalCredits === -1 ? 'créditos ilimitados' : finalCredits + ' créditos'}`)
-        return true
-
       } else {
-        // Usuário não encontrado - criar novo
-        console.log(`👤 Criando novo usuário ${email}...`)
-        
-        const finalCredits = newPlan === 'premium' ? -1 : 
-                            newPlan === 'pro' ? 200 : 
-                            newPlan === 'plus' ? 50 : 10
+        console.log('⚠️ [HYBRID] listUsers falhou:', listError?.message);
+      }
+    } catch (error) {
+      console.log('⚠️ [HYBRID] Erro no listUsers:', error);
+    }
 
+    // 2. Se não encontrou, tentar busca SQL direta
+    if (!userFound) {
+      try {
+        console.log('🔍 [HYBRID] Tentando busca SQL direta...');
+        const { data: users, error: searchError } = await supabaseAdmin
+          .from('auth.users')
+          .select('id, email, raw_user_meta_data')
+          .eq('email', email)
+          .single();
+
+        if (!searchError && users) {
+          userId = users.id;
+          currentPlan = users.raw_user_meta_data?.subscription_plan || 'free';
+          userFound = true;
+          console.log(`✅ [HYBRID] Usuário encontrado via SQL: ${email} (${currentPlan})`);
+        } else {
+          console.log('⚠️ [HYBRID] Busca SQL falhou:', searchError?.message);
+        }
+      } catch (error) {
+        console.log('⚠️ [HYBRID] Erro na busca SQL:', error);
+      }
+    }
+
+    // 3. Se não encontrou, tentar getUserById com IDs conhecidos
+    if (!userFound) {
+      console.log('🔍 [HYBRID] Tentando busca por IDs conhecidos...');
+      const knownUserIds = [
+        'f6592d4d-6bbb-461a-af1e-917cd1c31f7', // admin6
+        'outros-ids-conhecidos'
+      ];
+
+      for (const testId of knownUserIds) {
+        try {
+          const { data: user, error } = await supabaseAdmin.auth.admin.getUserById(testId);
+          if (!error && user?.user?.email === email) {
+            userId = testId;
+            currentPlan = user.user.user_metadata?.subscription_plan || 'free';
+            userFound = true;
+            console.log(`✅ [HYBRID] Usuário encontrado via ID conhecido: ${email}`);
+            break;
+          }
+        } catch (error) {
+          // Continuar tentando
+        }
+      }
+    }
+
+    // Determinar o melhor plano
+    const bestPlan = getBetterPlan(currentPlan, newPlan);
+    const finalCredits = bestPlan === 'premium' ? -1 : 
+                        bestPlan === 'pro' ? 200 : 
+                        bestPlan === 'plus' ? 50 : 10;
+
+    console.log(`🎯 [HYBRID] Plano: ${currentPlan} → ${newPlan} → ${bestPlan} (${finalCredits === -1 ? 'ilimitados' : finalCredits} créditos)`);
+
+    const updateData = {
+      user_metadata: {
+        subscription_plan: bestPlan,
+        subscription_status: 'active',
+        credits_remaining: finalCredits,
+        stripe_customer_id: session.customer,
+        last_payment_amount: amount,
+        last_payment_date: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        webhook_processed: true,
+        hybrid_processed: true,
+        force_refresh: new Date().getTime(),
+        processing_method: userFound ? 'update' : 'create'
+      }
+    };
+
+    if (userFound && userId) {
+      // Atualizar usuário existente
+      try {
+        const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(userId, updateData);
+        
+        if (updateError) {
+          console.error('❌ [HYBRID] Erro ao atualizar usuário:', updateError);
+          return false;
+        }
+        
+        console.log(`✅ [HYBRID] Usuário ${email} atualizado para ${bestPlan} com ${finalCredits === -1 ? 'créditos ilimitados' : finalCredits + ' créditos'}`);
+        return true;
+      } catch (error) {
+        console.error('❌ [HYBRID] Erro na atualização:', error);
+        return false;
+      }
+    } else {
+      // Criar novo usuário
+      try {
+        console.log(`👤 [HYBRID] Criando novo usuário ${email}...`);
+        
         const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
           email,
           email_confirm: true,
           user_metadata: {
             full_name: email.split('@')[0],
-            subscription_plan: newPlan,
-            subscription_status: 'active',
-            credits_remaining: finalCredits,
-            stripe_customer_id: session.customer,
-            last_payment_amount: amount,
-            last_payment_date: new Date().toISOString(),
+            ...updateData.user_metadata,
             created_via_stripe: true,
-            updated_at: new Date().toISOString(),
-            webhook_processed: true
+            created_via_hybrid: true
           }
-        })
+        });
 
         if (createError) {
-          console.error('❌ Erro ao criar usuário:', createError)
-          return false
+          console.error('❌ [HYBRID] Erro ao criar usuário:', createError);
+          return false;
         }
 
-        console.log(`✅ Usuário ${email} criado com ${newPlan} e ${finalCredits === -1 ? 'créditos ilimitados' : finalCredits + ' créditos'}`)
-        return true
+        console.log(`✅ [HYBRID] Usuário ${email} criado com ${bestPlan} e ${finalCredits === -1 ? 'créditos ilimitados' : finalCredits + ' créditos'}`);
+        return true;
+      } catch (error) {
+        console.error('❌ [HYBRID] Erro na criação:', error);
+        return false;
       }
-
-    } catch (error) {
-      console.error('❌ Erro na busca/criação:', error)
-      return false
     }
 
   } catch (error) {
-    console.error('❌ Erro geral na atualização:', error)
-    return false
+    console.error('❌ [HYBRID] Erro geral:', error);
+    return false;
   }
 }
