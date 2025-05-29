@@ -142,55 +142,36 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       return
     }
 
-    // Buscar usuário diretamente na tabela auth.users
+    // Buscar usuário usando listUsers() com tratamento de erro melhorado
     try {
-      // Buscar usuário usando query SQL direta na tabela auth.users
-      const { data: users, error: queryError } = await supabaseAdmin
-        .from('auth.users')
-        .select('id, email, raw_user_meta_data')
-        .eq('email', email)
-        .limit(1)
-      
-      if (queryError) {
-        console.error('❌ Erro ao buscar usuário:', queryError)
+      let userId: string | null = null
+      let userFound = false
+
+      // Tentar buscar usuário usando listUsers()
+      try {
+        const { data: authUsers, error: listError } = await supabaseAdmin.auth.admin.listUsers()
         
-        // Se falhar a busca, tentar criar usuário diretamente
-        console.log(`👤 Criando novo usuário para ${email}`)
-        const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
-          email,
-          email_confirm: true,
-          user_metadata: {
-            full_name: email.split('@')[0],
-            subscription_plan: plan,
-            subscription_status: 'active',
-            credits_remaining: credits,
-            total_credits_purchased: credits === -1 ? 0 : credits,
-            stripe_customer_id: session.customer,
-            last_payment_amount: amount,
-            last_payment_date: new Date().toISOString(),
-            created_via_stripe: true,
-            updated_at: new Date().toISOString()
+        if (!listError && authUsers?.users) {
+          const user = authUsers.users.find(u => u.email === email)
+          if (user) {
+            userId = user.id
+            userFound = true
+            console.log(`👤 Usuário ${email} encontrado (ID: ${userId}), atualizando plano...`)
           }
-        })
-
-        if (createError) {
-          console.error('❌ Erro ao criar usuário:', createError)
-          return
+        } else {
+          console.log('⚠️ Erro ou dados vazios no listUsers:', listError)
         }
-
-        console.log(`✅ Usuário ${email} criado com plano ${plan} e ${credits === -1 ? 'créditos ilimitados' : credits + ' créditos'}`)
-        return
+      } catch (listError) {
+        console.log('⚠️ Falha no listUsers, tentando abordagem alternativa:', listError)
       }
 
-      if (users && users.length > 0) {
+      if (userFound && userId) {
         // Usuário encontrado, atualizar
-        const userId = users[0].id
-        console.log(`👤 Usuário ${email} encontrado (ID: ${userId}), atualizando plano...`)
         await updateUserPlan(userId, plan, credits, session, amount)
       } else {
-        console.log(`👤 Usuário ${email} não encontrado. Criando...`)
+        console.log(`👤 Usuário ${email} não encontrado. Tentando criar...`)
         
-        // Criar usuário se não existir
+        // Tentar criar usuário se não existir
         const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
           email,
           email_confirm: true,
@@ -210,6 +191,29 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
 
         if (createError) {
           console.error('❌ Erro ao criar usuário:', createError)
+          
+          // Se falhar na criação (usuário já existe), tentar buscar por ID usando força bruta
+          if (createError.message?.includes('already') || createError.message?.includes('exists')) {
+            console.log('🔍 Usuário já existe, tentando buscar por força bruta...')
+            
+            // Como último recurso, vamos tentar atualizar todos os usuários com esse email
+            // Isso é uma solução temporária até resolvermos o problema de busca
+            try {
+              const { data: allUsers, error: allUsersError } = await supabaseAdmin.auth.admin.listUsers()
+              
+              if (!allUsersError && allUsers?.users) {
+                const existingUser = allUsers.users.find(u => u.email === email)
+                if (existingUser) {
+                  console.log(`🎯 Usuário ${email} encontrado na segunda tentativa, atualizando...`)
+                  await updateUserPlan(existingUser.id, plan, credits, session, amount)
+                  return
+                }
+              }
+            } catch (bruteForceError) {
+              console.error('❌ Falha na busca por força bruta:', bruteForceError)
+            }
+          }
+          
           return
         }
 
