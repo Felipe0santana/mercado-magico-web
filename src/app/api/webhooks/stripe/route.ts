@@ -23,15 +23,19 @@ const DEBUG_MODE = true
 // Mapear valores do Stripe para planos
 function mapStripeAmountToPlan(amount: number) {
   console.log(`💰 [REALTIME] Mapeando valor: R$ ${amount/100}`)
-  if (amount >= 2999) return { plan: 'premium', credits: -1 }
-  if (amount >= 1999) return { plan: 'pro', credits: 200 }
-  if (amount >= 999) return { plan: 'plus', credits: 50 }
+  
+  // Valores em centavos
+  if (amount >= 4999) return { plan: 'super', credits: -1 }      // R$ 49,99+ = Super
+  if (amount >= 2999) return { plan: 'premium', credits: -1 }    // R$ 29,99+ = Premium  
+  if (amount >= 1999) return { plan: 'pro', credits: 200 }       // R$ 19,99+ = Pro
+  if (amount >= 999) return { plan: 'plus', credits: 50 }        // R$ 9,99+ = Plus
+  
   return { plan: 'free', credits: 10 }
 }
 
 // Função para determinar o melhor plano entre dois
 function getBetterPlan(currentPlan: string, newPlan: string) {
-  const planHierarchy = { 'free': 0, 'plus': 1, 'pro': 2, 'premium': 3 }
+  const planHierarchy = { 'free': 0, 'plus': 1, 'pro': 2, 'premium': 3, 'super': 4 }
   const currentLevel = planHierarchy[currentPlan as keyof typeof planHierarchy] || 0
   const newLevel = planHierarchy[newPlan as keyof typeof planHierarchy] || 0
   
@@ -298,7 +302,8 @@ async function updateUserWithBestPlan(email: string, newPlan: string, newCredits
 
     // Determinar o melhor plano
     const bestPlan = getBetterPlan(currentPlan, newPlan);
-    const finalCredits = bestPlan === 'premium' ? -1 : 
+    const finalCredits = bestPlan === 'super' ? -1 :
+                        bestPlan === 'premium' ? -1 : 
                         bestPlan === 'pro' ? 200 : 
                         bestPlan === 'plus' ? 50 : 10;
 

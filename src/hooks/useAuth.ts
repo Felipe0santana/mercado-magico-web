@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabase'
 interface UserProfile {
   id: string
   email: string
-  subscription_plan: 'free' | 'plus' | 'pro' | 'premium'
+  subscription_plan: 'free' | 'plus' | 'pro' | 'premium' | 'super'
   subscription_status: string
   credits_remaining: number
   updated_at?: string

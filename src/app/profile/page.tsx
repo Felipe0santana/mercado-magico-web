@@ -24,7 +24,9 @@ import {
   X,
   Eye,
   EyeOff,
-  AlertTriangle
+  AlertTriangle,
+  Crown,
+  Star
 } from 'lucide-react'
 
 interface UserProfile {
@@ -391,9 +393,25 @@ export default function ProfilePage() {
               
               {/* Badge do Plano */}
               <div className="flex items-center justify-center space-x-2 mb-4">
-                <div className="bg-purple-600 text-white px-3 py-1 rounded-full text-sm font-medium flex items-center space-x-1">
-                  <Zap className="w-4 h-4" />
-                  <span>{userProfile?.plan || 'Pro'}</span>
+                <div className={`text-white px-3 py-1 rounded-full text-sm font-medium flex items-center space-x-1 ${
+                  user?.subscription_plan === 'super' ? 'bg-gradient-to-r from-purple-600 to-pink-600' :
+                  user?.subscription_plan === 'premium' ? 'bg-gradient-to-r from-yellow-500 to-orange-500' :
+                  user?.subscription_plan === 'pro' ? 'bg-purple-600' :
+                  user?.subscription_plan === 'plus' ? 'bg-blue-600' :
+                  'bg-gray-600'
+                }`}>
+                  {user?.subscription_plan === 'super' ? <Crown className="w-4 h-4" /> :
+                   user?.subscription_plan === 'premium' ? <Crown className="w-4 h-4" /> :
+                   user?.subscription_plan === 'pro' ? <Star className="w-4 h-4" /> :
+                   user?.subscription_plan === 'plus' ? <Zap className="w-4 h-4" /> :
+                   <User className="w-4 h-4" />}
+                  <span className="capitalize">
+                    {user?.subscription_plan === 'super' ? 'Super' :
+                     user?.subscription_plan === 'premium' ? 'Premium' :
+                     user?.subscription_plan === 'pro' ? 'Pro' :
+                     user?.subscription_plan === 'plus' ? 'Plus' :
+                     'Free'}
+                  </span>
                 </div>
                 <div className="flex items-center space-x-1 text-green-400 text-sm">
                   <div className="w-2 h-2 bg-green-400 rounded-full"></div>
@@ -408,11 +426,17 @@ export default function ProfilePage() {
                   <Package className="w-5 h-5 text-green-400" />
                 </div>
                 <div className="text-3xl font-bold text-green-400">
-                  {userProfile?.credits || 0}
+                  {user?.credits_remaining === -1 ? '∞' : (user?.credits_remaining || 0)}
                 </div>
                 <div className="text-gray-500 text-sm mt-1">
-                  <div>Total usado: {userStats?.ai_usage || 0}</div>
-                  <div>Este mês: {userStats?.monthly_ai_usage || 0} usados</div>
+                  {user?.credits_remaining === -1 ? (
+                    <div>Créditos ilimitados</div>
+                  ) : (
+                    <>
+                      <div>Total usado: {userStats?.ai_usage || 0}</div>
+                      <div>Este mês: {userStats?.monthly_ai_usage || 0} usados</div>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
