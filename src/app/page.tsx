@@ -5,6 +5,7 @@ import { Check, Camera, Brain, BarChart3, ShoppingCart, Smartphone, Zap, Star, U
 import { useCheckout } from '@/hooks/useCheckout'
 import { useAuth } from '@/hooks/useAuth'
 import AuthModal from '@/components/AuthModal'
+import AutoNotification from '@/components/AutoNotification'
 
 export default function Home() {
   const { redirectToCheckout, loading, error } = useCheckout()
@@ -703,6 +704,9 @@ export default function Home() {
           </div>
         </div>
       </footer>
+
+      {/* Componente de Notificação Automática */}
+      <AutoNotification />
     </div>
   )
 } 
