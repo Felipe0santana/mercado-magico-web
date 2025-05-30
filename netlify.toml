@@ -1,5 +1,5 @@
 [build]
-  command = "npm run build"
+  command = "npm run clean && npm run build"
   publish = ".next"
 
 [[plugins]]
@@ -8,16 +8,17 @@
 [build.environment]
   NODE_VERSION = "20"
   NPM_FLAGS = "--legacy-peer-deps"
+  NEXT_TELEMETRY_DISABLED = "1"
 
 # Configuração para Next.js
 [context.production]
-  command = "npm run build"
+  command = "npm run clean && npm run build"
 
 [context.deploy-preview]
-  command = "npm run build"
+  command = "npm run clean && npm run build"
 
 [context.branch-deploy]
-  command = "npm run build"
+  command = "npm run clean && npm run build"
 
 # Headers para otimização
 [[headers]]
