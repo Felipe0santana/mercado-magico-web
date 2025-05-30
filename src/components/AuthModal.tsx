@@ -25,7 +25,7 @@ export default function AuthModal({ isOpen, onClose, defaultTab = 'login', onSuc
   const [fullName, setFullName] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
 
-  const { signIn, signUp, resetPassword } = useAuth()
+  const { signIn, signUp } = useAuth()
 
   const resetForm = () => {
     setEmail('')
@@ -113,10 +113,33 @@ export default function AuthModal({ isOpen, onClose, defaultTab = 'login', onSuc
     }
   }
 
-  const handleForgotPassword = () => {
-    setError(null)
-    setSuccess('Link de recuperação enviado para seu email!')
-    setTimeout(() => setSuccess(null), 3000)
+  const handleForgotPassword = async () => {
+    if (!email) {
+      setError('Digite seu email primeiro')
+      return
+    }
+    
+    try {
+      setError(null)
+      console.log('🔐 [AUTH_MODAL] Enviando email de recuperação para:', email)
+      
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`
+      })
+      
+      if (error) {
+        console.error('❌ [AUTH_MODAL] Erro ao enviar email de recuperação:', error)
+        setError('Erro ao enviar email de recuperação')
+        return
+      }
+      
+      console.log('✅ [AUTH_MODAL] Email de recuperação enviado com sucesso')
+      setSuccess('Link de recuperação enviado para seu email!')
+      setTimeout(() => setSuccess(null), 5000)
+    } catch (err) {
+      console.error('❌ [AUTH_MODAL] Erro inesperado:', err)
+      setError('Erro inesperado ao enviar email')
+    }
   }
 
   if (!isOpen) return null
