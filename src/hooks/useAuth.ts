@@ -140,17 +140,20 @@ export function useAuth() {
     }
   }, [])
 
-  // Sistema automático de detecção de mudanças
+  // Sistema DEFINITIVO de detecção automática
   useEffect(() => {
-    console.log('🚀 [AUTH] Inicializando sistema automático')
+    console.log('🚀 [AUTH] Inicializando sistema DEFINITIVO de detecção automática')
     
     // Buscar usuário inicial
     fetchUser()
 
-    // Listener AUTOMÁTICO para mudanças de autenticação
+    // 1. LISTENER PRINCIPAL - Auth State Changes (detecta mudanças no user_metadata)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        console.log(`🔔 [AUTH] Evento automático: ${event}`, session?.user?.email || 'sem usuário')
+        console.log(`🔔 [AUTH] Evento: ${event}`, {
+          email: session?.user?.email || 'sem usuário',
+          metadata: session?.user?.user_metadata
+        })
         
         if (event === 'SIGNED_IN' && session?.user) {
           const userData = convertUserData(session.user)
@@ -168,35 +171,121 @@ export function useAuth() {
         } else if (event === 'USER_UPDATED' && session?.user) {
           const userData = convertUserData(session.user)
           setUser(userData)
-          console.log('✨ [AUTH] Usuário atualizado automaticamente:', userData)
+          console.log('✨ [AUTH] Usuário atualizado automaticamente via webhook:', userData)
         }
       }
     )
 
-    // Listener para mudanças de visibilidade da página (detecta quando volta do Stripe)
+    // 2. REALTIME LISTENER - Escuta mudanças na tabela auth.users (experimental)
+    let realtimeChannel: any = null
+    
+    const setupRealtimeListener = async () => {
+      try {
+        const { data: { user: currentUser } } = await supabase.auth.getUser()
+        
+        if (currentUser) {
+          console.log(`🔴 [AUTH] Configurando Realtime para usuário: ${currentUser.id}`)
+          
+          // Escutar mudanças na tabela auth.users (se disponível)
+          realtimeChannel = supabase
+            .channel(`user-updates-${currentUser.id}`)
+            .on(
+              'postgres_changes',
+              {
+                event: 'UPDATE',
+                schema: 'auth',
+                table: 'users',
+                filter: `id=eq.${currentUser.id}`
+              },
+              (payload) => {
+                console.log('🔴 [AUTH] Mudança detectada via Realtime:', payload)
+                // Recarregar dados do usuário
+                setTimeout(() => {
+                  fetchUser()
+                }, 500)
+              }
+            )
+            .subscribe((status) => {
+              console.log(`🔴 [AUTH] Status do Realtime: ${status}`)
+            })
+        }
+      } catch (error) {
+        console.log('ℹ️ [AUTH] Realtime não disponível para auth.users (normal):', error)
+      }
+    }
+
+    // Configurar Realtime após login
+    setupRealtimeListener()
+
+    // 3. DETECÇÃO DE FOCO/VISIBILIDADE - Para quando volta do Stripe
     const handleVisibilityChange = () => {
       if (!document.hidden) {
-        console.log('👁️ [AUTH] Página visível - verificando atualizações automáticas')
+        console.log('👁️ [AUTH] Página visível - verificando atualizações')
         setTimeout(() => {
           fetchUser()
         }, 1000) // Aguarda 1 segundo para garantir que o webhook processou
       }
     }
 
-    // Listener para mudanças de foco da janela
     const handleFocus = () => {
-      console.log('🎯 [AUTH] Janela em foco - verificando atualizações automáticas')
+      console.log('🎯 [AUTH] Janela em foco - verificando atualizações')
       setTimeout(() => {
         fetchUser()
       }, 1000)
     }
 
+    // 4. POLLING INTELIGENTE - Apenas quando necessário
+    let pollingInterval: NodeJS.Timeout | null = null
+    let lastMetadataHash = ''
+
+    const startIntelligentPolling = () => {
+      // Polling apenas se houver usuário logado
+      pollingInterval = setInterval(async () => {
+        try {
+          const { data: { user: currentUser } } = await supabase.auth.getUser()
+          
+          if (currentUser) {
+            const metadataString = JSON.stringify(currentUser.user_metadata || {})
+            const currentHash = btoa(metadataString) // Hash simples
+            
+            if (currentHash !== lastMetadataHash) {
+              console.log('🔄 [AUTH] Mudança detectada via polling inteligente')
+              const userData = convertUserData(currentUser)
+              setUser(userData)
+              lastMetadataHash = currentHash
+            }
+          }
+        } catch (error) {
+          console.error('❌ [AUTH] Erro no polling:', error)
+        }
+      }, 3000) // Polling a cada 3 segundos (mais conservador)
+    }
+
+    // Iniciar polling inteligente
+    startIntelligentPolling()
+
+    // Event listeners
     document.addEventListener('visibilitychange', handleVisibilityChange)
     window.addEventListener('focus', handleFocus)
 
+    // Cleanup
     return () => {
-      console.log('🧹 [AUTH] Limpando listeners automáticos')
+      console.log('🧹 [AUTH] Limpando todos os listeners')
+      
+      // Limpar auth subscription
       subscription.unsubscribe()
+      
+      // Limpar realtime
+      if (realtimeChannel) {
+        supabase.removeChannel(realtimeChannel)
+      }
+      
+      // Limpar polling
+      if (pollingInterval) {
+        clearInterval(pollingInterval)
+      }
+      
+      // Limpar event listeners
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.removeEventListener('focus', handleFocus)
     }

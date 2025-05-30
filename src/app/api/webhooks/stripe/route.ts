@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
     let event: Stripe.Event
     try {
       event = stripe.webhooks.constructEvent(body, signature, effectiveSecret)
-      console.log(`✅ [WEBHOOK] Evento verificado: ${event.type}`)
+      console.log(`✅ [WEBHOOK] Evento verificado: ${event.type} [${event.id}]`)
     } catch (err) {
       console.error('❌ [WEBHOOK] Erro na verificação da assinatura:', err)
       return NextResponse.json({ error: 'Assinatura inválida' }, { status: 400 })
@@ -77,9 +77,19 @@ export async function POST(request: NextRequest) {
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object as Stripe.Checkout.Session
       console.log(`💳 [WEBHOOK] Processando checkout: ${session.id}`)
+      console.log(`📧 [WEBHOOK] Email do cliente: ${session.customer_details?.email}`)
 
       const customerEmail = session.customer_details?.email
-      const priceId = session.line_items?.data?.[0]?.price?.id
+      
+      // Buscar line items para obter o price_id
+      let priceId: string | undefined
+      try {
+        const lineItems = await stripe.checkout.sessions.listLineItems(session.id)
+        priceId = lineItems.data[0]?.price?.id
+        console.log(`💰 [WEBHOOK] Price ID encontrado: ${priceId}`)
+      } catch (error) {
+        console.error('❌ [WEBHOOK] Erro ao buscar line items:', error)
+      }
 
       if (!customerEmail) {
         console.error('❌ [WEBHOOK] Email do cliente não encontrado')
@@ -95,6 +105,7 @@ export async function POST(request: NextRequest) {
       const planConfig = PRICE_TO_PLAN_MAP[priceId]
       if (!planConfig) {
         console.error(`❌ [WEBHOOK] Price ID não mapeado: ${priceId}`)
+        console.log('📋 [WEBHOOK] Price IDs disponíveis:', Object.keys(PRICE_TO_PLAN_MAP))
         return NextResponse.json({ error: 'Plano não encontrado' }, { status: 400 })
       }
 
@@ -108,6 +119,7 @@ export async function POST(request: NextRequest) {
 
       try {
         // Buscar usuário pelo email
+        console.log(`🔍 [WEBHOOK] Buscando usuário: ${customerEmail}`)
         const { data: users, error: listError } = await supabaseAdmin.auth.admin.listUsers()
         
         if (listError) {
@@ -121,19 +133,30 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ error: 'Usuário não encontrado' }, { status: 404 })
         }
 
-        // Atualizar metadados do usuário
+        console.log(`👤 [WEBHOOK] Usuário encontrado: ${user.id}`)
+        console.log(`📊 [WEBHOOK] Metadados atuais:`, user.user_metadata)
+
+        // Preparar dados de atualização
+        const currentMetadata = user.user_metadata || {}
         const updateData = {
           user_metadata: {
-            ...user.user_metadata,
+            ...currentMetadata,
             subscription_plan: planConfig.plan,
             subscription_status: 'active',
             credits_remaining: planConfig.credits,
             updated_at: new Date().toISOString(),
-            last_payment: session.id
+            last_payment: session.id,
+            last_payment_date: new Date().toISOString(),
+            stripe_customer_id: session.customer,
+            // Forçar mudança para trigger do Realtime
+            webhook_update_count: (currentMetadata.webhook_update_count || 0) + 1
           }
         }
 
-        const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(user.id, updateData)
+        console.log(`🔄 [WEBHOOK] Atualizando usuário com dados:`, updateData.user_metadata)
+
+        // Atualizar user_metadata
+        const { data: updatedUser, error: updateError } = await supabaseAdmin.auth.admin.updateUserById(user.id, updateData)
 
         if (updateError) {
           console.error('❌ [WEBHOOK] Erro ao atualizar usuário:', updateError)
@@ -141,6 +164,17 @@ export async function POST(request: NextRequest) {
         }
 
         console.log(`✅ [WEBHOOK] Usuário ${customerEmail} atualizado para plano ${planConfig.plan}`)
+        console.log(`📊 [WEBHOOK] Novos metadados:`, updatedUser.user?.user_metadata)
+
+        // Log de sucesso detalhado
+        console.log(`🎉 [WEBHOOK] SUCESSO COMPLETO:`)
+        console.log(`   - Evento: ${event.type} [${event.id}]`)
+        console.log(`   - Session: ${session.id}`)
+        console.log(`   - Email: ${customerEmail}`)
+        console.log(`   - User ID: ${user.id}`)
+        console.log(`   - Price ID: ${priceId}`)
+        console.log(`   - Plano: ${planConfig.plan}`)
+        console.log(`   - Créditos: ${planConfig.credits === -1 ? 'ilimitado' : planConfig.credits}`)
 
       } catch (error) {
         console.error('❌ [WEBHOOK] Erro inesperado:', error)
@@ -150,7 +184,7 @@ export async function POST(request: NextRequest) {
       console.log(`ℹ️ [WEBHOOK] Evento ignorado: ${event.type}`)
     }
 
-    return NextResponse.json({ received: true })
+    return NextResponse.json({ received: true, event_type: event.type, event_id: event.id })
 
   } catch (error) {
     console.error('❌ [WEBHOOK] Erro geral:', error)

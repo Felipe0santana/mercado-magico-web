@@ -26,7 +26,8 @@ import {
   EyeOff,
   AlertTriangle,
   Crown,
-  Star
+  Star,
+  RefreshCw
 } from 'lucide-react'
 
 interface UserProfile {
@@ -52,152 +53,43 @@ interface UserStats {
 }
 
 export default function ProfilePage() {
-  const { user, loading, signOut, refreshUser } = useAuth()
+  const { user, loading, signOut } = useAuth()
   const router = useRouter()
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
-  const [userStats, setUserStats] = useState<UserStats | null>(null)
   const [isEditing, setIsEditing] = useState(false)
-  const [editForm, setEditForm] = useState({ full_name: '' })
   const [isChangingPassword, setIsChangingPassword] = useState(false)
-  const [passwordForm, setPasswordForm] = useState({ 
-    currentPassword: '', 
-    newPassword: '', 
-    confirmPassword: '' 
-  })
-  const [showPasswords, setShowPasswords] = useState({
-    current: false,
-    new: false,
-    confirm: false
-  })
-  const [isDeleting, setIsDeleting] = useState(false)
-  const [deleteConfirm, setDeleteConfirm] = useState('')
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [loadingAction, setLoadingAction] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState('')
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
 
-  // Forçar refresh dos dados do usuário quando a página carregar
-  useEffect(() => {
-    const forceRefresh = async () => {
-      if (refreshUser) {
-        setIsRefreshing(true)
-        await refreshUser()
-        setIsRefreshing(false)
-      }
-    }
-    
-    forceRefresh()
-  }, [refreshUser])
+  // Estados para edição
+  const [editForm, setEditForm] = useState({
+    full_name: ''
+  })
 
-  // Detectar quando o usuário volta da página de pagamento
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (!document.hidden && refreshUser) {
-        console.log('🔄 [PROFILE] Página ficou visível, atualizando dados...')
-        refreshUser()
-      }
-    }
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  })
 
-    const handleFocus = () => {
-      if (refreshUser) {
-        console.log('🔄 [PROFILE] Página recebeu foco, atualizando dados...')
-        refreshUser()
-      }
-    }
-
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    window.addEventListener('focus', handleFocus)
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
-      window.removeEventListener('focus', handleFocus)
-    }
-  }, [refreshUser])
-
+  // Atualizar timestamp quando user muda
   useEffect(() => {
     if (user) {
-      loadUserData()
+      setLastUpdate(new Date())
     }
   }, [user])
 
-  const loadUserData = async () => {
-    try {
-      // Carregar perfil do usuário
-      const { data: profile, error: profileError } = await supabase
-        .from('user_profiles')
-        .select('*')
-        .eq('id', user?.id)
-        .single()
-
-      if (profileError && profileError.code !== 'PGRST116') {
-        console.error('Erro ao carregar perfil:', profileError)
-      } else if (profile) {
-        setUserProfile(profile)
-        setEditForm({ full_name: profile.full_name || '' })
-      } else {
-        // Criar perfil se não existir
-        const newProfile = {
-          id: user?.id,
-          email: user?.email,
-          full_name: null,
-          plan: 'Pro',
-          credits: 200,
-          created_at: new Date().toISOString(),
-          last_activity: new Date().toISOString()
-        }
-        
-        const { data: createdProfile, error: createError } = await supabase
-          .from('user_profiles')
-          .insert([newProfile])
-          .select()
-          .single()
-
-        if (!createError && createdProfile) {
-          setUserProfile(createdProfile)
-          setEditForm({ full_name: createdProfile.full_name || '' })
-        }
-      }
-
-      // Carregar estatísticas do usuário
-      const { data: stats, error: statsError } = await supabase
-        .from('user_stats')
-        .select('*')
-        .eq('user_id', user?.id)
-        .single()
-
-      if (statsError && statsError.code !== 'PGRST116') {
-        console.error('Erro ao carregar estatísticas:', statsError)
-      } else if (stats) {
-        setUserStats(stats)
-      } else {
-        // Criar estatísticas se não existirem
-        const newStats = {
-          user_id: user?.id,
-          lists_created: 0,
-          items_added: 0,
-          purchases_made: 0,
-          total_spent: 0,
-          ai_usage: 1,
-          monthly_lists: 0,
-          monthly_ai_usage: 0,
-          avg_items_per_list: 0,
-          favorite_feature: 'Reconhecimento IA'
-        }
-        
-        const { data: createdStats, error: createStatsError } = await supabase
-          .from('user_stats')
-          .insert([newStats])
-          .select()
-          .single()
-
-        if (!createStatsError && createdStats) {
-          setUserStats(createdStats)
-        }
-      }
-    } catch (error) {
-      console.error('Erro ao carregar dados:', error)
+  // Redirecionar se não estiver logado
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push('/')
     }
-  }
+  }, [user, loading, router])
 
   const handleSignOut = async () => {
     try {
@@ -212,112 +104,39 @@ export default function ProfilePage() {
     router.push('/')
   }
 
-  const handleEditProfile = async () => {
-    if (!userProfile) return
-    
-    setLoadingAction('edit')
-    setError('')
-    setSuccess('')
-    
-    try {
-      const { error } = await supabase
-        .from('user_profiles')
-        .update({ 
-          full_name: editForm.full_name,
-          last_activity: new Date().toISOString()
-        })
-        .eq('id', userProfile.id)
-
-      if (error) throw error
-
-      setUserProfile(prev => prev ? { ...prev, full_name: editForm.full_name } : null)
-      setIsEditing(false)
-      setSuccess('Perfil atualizado com sucesso!')
-    } catch (error: any) {
-      setError('Erro ao atualizar perfil: ' + error.message)
-    } finally {
-      setLoadingAction('')
+  const getPlanColor = (plan: string) => {
+    switch (plan) {
+      case 'free': return 'text-gray-600'
+      case 'plus': return 'text-blue-600'
+      case 'pro': return 'text-purple-600'
+      case 'premium': return 'text-orange-600'
+      case 'super': return 'text-red-600'
+      default: return 'text-gray-600'
     }
   }
 
-  const handleChangePassword = async () => {
-    setLoadingAction('password')
-    setError('')
-    setSuccess('')
-
-    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-      setError('As senhas não coincidem')
-      setLoadingAction('')
-      return
-    }
-
-    if (passwordForm.newPassword.length < 6) {
-      setError('A nova senha deve ter pelo menos 6 caracteres')
-      setLoadingAction('')
-      return
-    }
-
-    try {
-      const { error } = await supabase.auth.updateUser({
-        password: passwordForm.newPassword
-      })
-
-      if (error) throw error
-
-      setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' })
-      setIsChangingPassword(false)
-      setSuccess('Senha alterada com sucesso!')
-    } catch (error: any) {
-      setError('Erro ao alterar senha: ' + error.message)
-    } finally {
-      setLoadingAction('')
+  const getPlanIcon = (plan: string) => {
+    switch (plan) {
+      case 'free': return <Package className="w-5 h-5" />
+      case 'plus': return <Star className="w-5 h-5" />
+      case 'pro': return <Crown className="w-5 h-5" />
+      case 'premium': return <Zap className="w-5 h-5" />
+      case 'super': return <TrendingUp className="w-5 h-5" />
+      default: return <Package className="w-5 h-5" />
     }
   }
 
-  const handleDeleteAccount = async () => {
-    if (deleteConfirm !== 'DELETAR') {
-      setError('Digite "DELETAR" para confirmar')
-      return
-    }
-
-    setLoadingAction('delete')
-    setError('')
-
-    try {
-      // Deletar dados do usuário
-      await supabase.from('user_profiles').delete().eq('id', user?.id)
-      await supabase.from('user_stats').delete().eq('user_id', user?.id)
-      
-      // Deletar conta do usuário (isso requer privilégios administrativos)
-      // Por segurança, vamos apenas fazer logout
-      await signOut()
-      router.push('/')
-    } catch (error: any) {
-      setError('Erro ao deletar conta: ' + error.message)
-    } finally {
-      setLoadingAction('')
-    }
+  const formatCredits = (credits: number) => {
+    if (credits === -1) return 'Ilimitado'
+    return credits.toLocaleString('pt-BR')
   }
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('pt-BR')
-  }
-
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('pt-BR', {
-      style: 'currency',
-      currency: 'BRL'
-    }).format(value)
-  }
-
-  if (loading || isRefreshing) {
+  if (loading) {
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 border-4 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
-          <div className="text-white text-xl">
-            {isRefreshing ? 'Atualizando dados...' : 'Carregando perfil...'}
-          </div>
+      <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Carregando perfil...</p>
         </div>
       </div>
     )
@@ -329,424 +148,199 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white">
+    <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50">
       {/* Header */}
-      <div className="bg-gray-800 border-b border-gray-700">
-        <div className="max-w-7xl mx-auto px-6 py-4">
+      <div className="bg-white shadow-sm border-b">
+        <div className="max-w-4xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
               <button
                 onClick={handleGoBack}
-                className="flex items-center space-x-2 text-gray-400 hover:text-white transition-colors"
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
               >
-                <ArrowLeft className="w-5 h-5" />
-                <span>Voltar</span>
+                <ArrowLeft className="w-5 h-5 text-gray-600" />
               </button>
-              <h1 className="text-2xl font-bold text-white">Meu Perfil</h1>
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">Meu Perfil</h1>
+                <p className="text-sm text-gray-500">
+                  Última atualização: {lastUpdate.toLocaleTimeString('pt-BR')}
+                </p>
+              </div>
             </div>
-            <div className="flex items-center space-x-3">
-              <button
-                onClick={handleSignOut}
-                className="flex items-center space-x-2 text-red-400 hover:text-red-300 transition-colors"
-              >
-                <LogOut className="w-5 h-5" />
-                <span>Sair</span>
-              </button>
-            </div>
+            <button
+              onClick={handleSignOut}
+              className="flex items-center space-x-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+              <span>Sair</span>
+            </button>
           </div>
         </div>
       </div>
 
-      {/* Mensagens de Sucesso/Erro */}
-      {success && (
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="bg-green-600 text-white p-4 rounded-lg">
-            {success}
+      <div className="max-w-4xl mx-auto px-4 py-8">
+        {/* Alertas */}
+        {error && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center space-x-2">
+            <AlertTriangle className="w-5 h-5 text-red-600" />
+            <span className="text-red-700">{error}</span>
           </div>
-        </div>
-      )}
-      
-      {error && (
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="bg-red-600 text-white p-4 rounded-lg">
-            {error}
-          </div>
-        </div>
-      )}
+        )}
 
-      <div className="max-w-7xl mx-auto px-6 py-8">
+        {success && (
+          <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+            <span className="text-green-700">{success}</span>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Coluna Esquerda - Perfil */}
-          <div className="space-y-6">
-            {/* Avatar e Info Básica */}
-            <div className="bg-gray-800 rounded-lg p-6 text-center">
-              <div className="w-24 h-24 bg-green-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                <User className="w-12 h-12 text-white" />
+          {/* Informações do Usuário */}
+          <div className="lg:col-span-2 space-y-6">
+            {/* Card Principal */}
+            <div className="bg-white rounded-xl shadow-sm border p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-semibold text-gray-900">Informações Pessoais</h2>
+                <button
+                  onClick={() => setIsEditing(!isEditing)}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <Edit className="w-4 h-4 text-gray-600" />
+                </button>
               </div>
-              <h2 className="text-2xl font-bold text-white mb-2">
-                {userProfile?.full_name || 'Usuário'}
-              </h2>
-              <p className="text-gray-400 mb-4">{userProfile?.email}</p>
-              <p className="text-gray-500 text-sm mb-4">
-                Membro desde {userProfile?.created_at ? formatDate(userProfile.created_at) : 'N/A'}
-              </p>
-              
-              {/* Badge do Plano */}
-              <div className="flex items-center justify-center space-x-2 mb-4">
-                <div className={`text-white px-3 py-1 rounded-full text-sm font-medium flex items-center space-x-1 ${
-                  user?.subscription_plan === 'super' ? 'bg-gradient-to-r from-purple-600 to-pink-600' :
-                  user?.subscription_plan === 'premium' ? 'bg-gradient-to-r from-yellow-500 to-orange-500' :
-                  user?.subscription_plan === 'pro' ? 'bg-purple-600' :
-                  user?.subscription_plan === 'plus' ? 'bg-blue-600' :
-                  'bg-gray-600'
-                }`}>
-                  {user?.subscription_plan === 'super' ? <Crown className="w-4 h-4" /> :
-                   user?.subscription_plan === 'premium' ? <Crown className="w-4 h-4" /> :
-                   user?.subscription_plan === 'pro' ? <Star className="w-4 h-4" /> :
-                   user?.subscription_plan === 'plus' ? <Zap className="w-4 h-4" /> :
-                   <User className="w-4 h-4" />}
-                  <span className="capitalize">
-                    {user?.subscription_plan === 'super' ? 'Super' :
-                     user?.subscription_plan === 'premium' ? 'Premium' :
-                     user?.subscription_plan === 'pro' ? 'Pro' :
-                     user?.subscription_plan === 'plus' ? 'Plus' :
-                     'Free'}
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Email
+                  </label>
+                  <div className="p-3 bg-gray-50 rounded-lg">
+                    <span className="text-gray-900">{user.email}</span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    ID do Usuário
+                  </label>
+                  <div className="p-3 bg-gray-50 rounded-lg">
+                    <span className="text-gray-600 font-mono text-sm">{user.id}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Plano e Créditos - TEMPO REAL */}
+            <div className="bg-white rounded-xl shadow-sm border p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-semibold text-gray-900">Plano e Créditos</h2>
+                <div className="flex items-center space-x-2 text-sm text-gray-500">
+                  <RefreshCw className="w-4 h-4" />
+                  <span>Atualização automática</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Plano Atual */}
+                <div className="p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border">
+                  <div className="flex items-center space-x-3 mb-2">
+                    <div className={`${getPlanColor(user.subscription_plan)}`}>
+                      {getPlanIcon(user.subscription_plan)}
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-gray-900">Plano Atual</h3>
+                      <p className={`text-lg font-bold capitalize ${getPlanColor(user.subscription_plan)}`}>
+                        {user.subscription_plan}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-sm text-gray-600">
+                    Status: <span className="font-medium text-green-600">{user.subscription_status}</span>
+                  </div>
+                </div>
+
+                {/* Créditos */}
+                <div className="p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border">
+                  <div className="flex items-center space-x-3 mb-2">
+                    <Zap className="w-5 h-5 text-yellow-600" />
+                    <div>
+                      <h3 className="font-semibold text-gray-900">Créditos</h3>
+                      <p className="text-lg font-bold text-yellow-600">
+                        {formatCredits(user.credits_remaining)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-sm text-gray-600">
+                    {user.credits_remaining === -1 ? 'Uso ilimitado' : 'Créditos disponíveis'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Debug Info - Apenas em desenvolvimento */}
+              {process.env.NODE_ENV === 'development' && (
+                <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+                  <h4 className="font-medium text-gray-900 mb-2">Debug Info</h4>
+                  <pre className="text-xs text-gray-600 overflow-auto">
+                    {JSON.stringify(user, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Sidebar */}
+          <div className="space-y-6">
+            {/* Ações Rápidas */}
+            <div className="bg-white rounded-xl shadow-sm border p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Ações Rápidas</h3>
+              <div className="space-y-3">
+                <button
+                  onClick={() => router.push('/pricing')}
+                  className="w-full flex items-center space-x-3 p-3 text-left hover:bg-blue-50 rounded-lg transition-colors"
+                >
+                  <Crown className="w-5 h-5 text-blue-600" />
+                  <span className="text-gray-700">Alterar Plano</span>
+                </button>
+                
+                <button
+                  onClick={() => setIsChangingPassword(true)}
+                  className="w-full flex items-center space-x-3 p-3 text-left hover:bg-gray-50 rounded-lg transition-colors"
+                >
+                  <Shield className="w-5 h-5 text-gray-600" />
+                  <span className="text-gray-700">Alterar Senha</span>
+                </button>
+                
+                <button
+                  onClick={() => setIsDeletingAccount(true)}
+                  className="w-full flex items-center space-x-3 p-3 text-left hover:bg-red-50 rounded-lg transition-colors"
+                >
+                  <Trash2 className="w-5 h-5 text-red-600" />
+                  <span className="text-red-700">Deletar Conta</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Estatísticas */}
+            <div className="bg-white rounded-xl shadow-sm border p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Estatísticas</h3>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <Calendar className="w-4 h-4 text-gray-500" />
+                    <span className="text-sm text-gray-600">Membro desde</span>
+                  </div>
+                  <span className="text-sm font-medium text-gray-900">
+                    {user.updated_at ? new Date(user.updated_at).toLocaleDateString('pt-BR') : 'N/A'}
                   </span>
                 </div>
-                <div className="flex items-center space-x-1 text-green-400 text-sm">
-                  <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-                  <span>Ativo</span>
-                </div>
-              </div>
-
-              {/* Créditos */}
-              <div className="bg-gray-700 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-gray-400 text-sm">Créditos Disponíveis</span>
-                  <Package className="w-5 h-5 text-green-400" />
-                </div>
-                <div className="text-3xl font-bold text-green-400">
-                  {user?.credits_remaining === -1 ? '∞' : (user?.credits_remaining || 0)}
-                </div>
-                <div className="text-gray-500 text-sm mt-1">
-                  {user?.credits_remaining === -1 ? (
-                    <div>Créditos ilimitados</div>
-                  ) : (
-                    <>
-                      <div>Total usado: {userStats?.ai_usage || 0}</div>
-                      <div>Este mês: {userStats?.monthly_ai_usage || 0} usados</div>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Resumo de Atividade */}
-            <div className="bg-gray-800 rounded-lg p-6">
-              <div className="flex items-center space-x-2 mb-4">
-                <BarChart3 className="w-5 h-5 text-blue-400" />
-                <h3 className="text-lg font-semibold">Resumo de Atividade</h3>
-              </div>
-              <div className="space-y-3">
-                <div className="flex justify-between">
-                  <span className="text-gray-400">Listas criadas</span>
-                  <span className="text-white font-medium">{userStats?.lists_created || 0}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-400">Itens adicionados</span>
-                  <span className="text-white font-medium">{userStats?.items_added || 0}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-400">Compras realizadas</span>
-                  <span className="text-white font-medium">{userStats?.purchases_made || 0}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-400">Funcionalidade favorita</span>
-                  <span className="text-green-400 font-medium">{userStats?.favorite_feature || 'Reconhecimento IA'}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Coluna Central e Direita */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Cards de Estatísticas */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-gray-800 rounded-lg p-4 border-l-4 border-blue-500">
-                <div className="flex items-center justify-between mb-2">
-                  <ShoppingCart className="w-8 h-8 text-blue-400" />
-                  <span className="text-2xl font-bold text-white">{userStats?.lists_created || 0}</span>
-                </div>
-                <div className="text-blue-400 text-sm font-medium">Listas Criadas</div>
-                <div className="text-green-400 text-xs">+{userStats?.monthly_lists || 0} este mês</div>
-              </div>
-
-              <div className="bg-gray-800 rounded-lg p-4 border-l-4 border-purple-500">
-                <div className="flex items-center justify-between mb-2">
-                  <Package className="w-8 h-8 text-purple-400" />
-                  <span className="text-2xl font-bold text-white">{userStats?.items_added || 0}</span>
-                </div>
-                <div className="text-purple-400 text-sm font-medium">Itens Adicionados</div>
-                <div className="text-blue-400 text-xs">~{userStats?.avg_items_per_list || 0} por lista</div>
-              </div>
-
-              <div className="bg-gray-800 rounded-lg p-4 border-l-4 border-green-500">
-                <div className="flex items-center justify-between mb-2">
-                  <Receipt className="w-8 h-8 text-green-400" />
-                  <span className="text-2xl font-bold text-white">{userStats?.purchases_made || 0}</span>
-                </div>
-                <div className="text-green-400 text-sm font-medium">Compras Realizadas</div>
-                <div className="text-gray-400 text-xs">{formatCurrency(userStats?.total_spent || 0)} total</div>
-              </div>
-
-              <div className="bg-gray-800 rounded-lg p-4 border-l-4 border-yellow-500">
-                <div className="flex items-center justify-between mb-2">
-                  <Zap className="w-8 h-8 text-yellow-400" />
-                  <span className="text-2xl font-bold text-white">{userStats?.ai_usage || 1}</span>
-                </div>
-                <div className="text-yellow-400 text-sm font-medium">IA Utilizada</div>
-                <div className="text-orange-400 text-xs">{userStats?.monthly_ai_usage || 0} este mês</div>
-              </div>
-            </div>
-
-            {/* Informações Pessoais */}
-            <div className="bg-gray-800 rounded-lg p-6">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center space-x-2">
-                  <User className="w-5 h-5 text-blue-400" />
-                  <h3 className="text-lg font-semibold">Informações Pessoais</h3>
-                </div>
-                {!isEditing ? (
-                  <button 
-                    onClick={() => setIsEditing(true)}
-                    className="flex items-center space-x-1 text-green-400 hover:text-green-300 transition-colors"
-                  >
-                    <Edit className="w-4 h-4" />
-                    <span>Editar</span>
-                  </button>
-                ) : (
+                
+                <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
-                    <button 
-                      onClick={handleEditProfile}
-                      disabled={loadingAction === 'edit'}
-                      className="flex items-center space-x-1 text-green-400 hover:text-green-300 transition-colors disabled:opacity-50"
-                    >
-                      <Save className="w-4 h-4" />
-                      <span>{loadingAction === 'edit' ? 'Salvando...' : 'Salvar'}</span>
-                    </button>
-                    <button 
-                      onClick={() => {
-                        setIsEditing(false)
-                        setEditForm({ full_name: userProfile?.full_name || '' })
-                      }}
-                      className="flex items-center space-x-1 text-gray-400 hover:text-gray-300 transition-colors"
-                    >
-                      <X className="w-4 h-4" />
-                      <span>Cancelar</span>
-                    </button>
+                    <Clock className="w-4 h-4 text-gray-500" />
+                    <span className="text-sm text-gray-600">Última atualização</span>
                   </div>
-                )}
-              </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-gray-400 text-sm mb-2">Nome Completo</label>
-                  {isEditing ? (
-                    <input
-                      type="text"
-                      value={editForm.full_name}
-                      onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
-                      className="w-full bg-gray-700 rounded-lg p-3 text-white border border-gray-600 focus:border-blue-500 focus:outline-none"
-                      placeholder="Digite seu nome completo"
-                    />
-                  ) : (
-                    <div className="bg-gray-700 rounded-lg p-3 flex items-center space-x-2">
-                      <User className="w-4 h-4 text-gray-400" />
-                      <span className="text-white">{userProfile?.full_name || 'Não informado'}</span>
-                    </div>
-                  )}
-                </div>
-                
-                <div>
-                  <label className="block text-gray-400 text-sm mb-2">Email</label>
-                  <div className="bg-gray-700 rounded-lg p-3 flex items-center justify-between">
-                    <span className="text-white">{userProfile?.email}</span>
-                    <span className="text-gray-500 text-xs">(não editável)</span>
-                  </div>
-                </div>
-                
-                <div>
-                  <label className="block text-gray-400 text-sm mb-2">Membro desde</label>
-                  <div className="bg-gray-700 rounded-lg p-3 flex items-center space-x-2">
-                    <Calendar className="w-4 h-4 text-gray-400" />
-                    <span className="text-white">
-                      {userProfile?.created_at ? formatDate(userProfile.created_at) : 'N/A'}
-                    </span>
-                  </div>
-                </div>
-                
-                <div>
-                  <label className="block text-gray-400 text-sm mb-2">Última Atividade</label>
-                  <div className="bg-gray-700 rounded-lg p-3 flex items-center space-x-2">
-                    <Clock className="w-4 h-4 text-gray-400" />
-                    <span className="text-white">
-                      {userProfile?.last_activity ? formatDate(userProfile.last_activity) : 'N/A'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Segurança */}
-            <div className="bg-gray-800 rounded-lg p-6">
-              <div className="flex items-center space-x-2 mb-6">
-                <Shield className="w-5 h-5 text-orange-400" />
-                <h3 className="text-lg font-semibold">Segurança</h3>
-              </div>
-              
-              <div className="space-y-4">
-                {/* Alterar Senha */}
-                <div className="p-4 bg-gray-700 rounded-lg">
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <div className="text-white font-medium">Alterar Senha</div>
-                      <div className="text-gray-400 text-sm">Atualize sua senha para manter sua conta segura</div>
-                    </div>
-                    <button 
-                      onClick={() => setIsChangingPassword(!isChangingPassword)}
-                      className="text-green-400 hover:text-green-300 transition-colors font-medium"
-                    >
-                      {isChangingPassword ? 'Cancelar' : 'Alterar'}
-                    </button>
-                  </div>
-                  
-                  {isChangingPassword && (
-                    <div className="space-y-4">
-                      <div className="relative">
-                        <input
-                          type={showPasswords.new ? 'text' : 'password'}
-                          value={passwordForm.newPassword}
-                          onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
-                          className="w-full bg-gray-600 rounded-lg p-3 text-white border border-gray-500 focus:border-blue-500 focus:outline-none pr-10"
-                          placeholder="Nova senha"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowPasswords({ ...showPasswords, new: !showPasswords.new })}
-                          className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white"
-                        >
-                          {showPasswords.new ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                        </button>
-                      </div>
-                      
-                      <div className="relative">
-                        <input
-                          type={showPasswords.confirm ? 'text' : 'password'}
-                          value={passwordForm.confirmPassword}
-                          onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
-                          className="w-full bg-gray-600 rounded-lg p-3 text-white border border-gray-500 focus:border-blue-500 focus:outline-none pr-10"
-                          placeholder="Confirmar nova senha"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowPasswords({ ...showPasswords, confirm: !showPasswords.confirm })}
-                          className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white"
-                        >
-                          {showPasswords.confirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                        </button>
-                      </div>
-                      
-                      <button
-                        onClick={handleChangePassword}
-                        disabled={loadingAction === 'password'}
-                        className="w-full bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded-lg transition-colors disabled:opacity-50"
-                      >
-                        {loadingAction === 'password' ? 'Alterando...' : 'Confirmar Alteração'}
-                      </button>
-                    </div>
-                  )}
-                </div>
-                
-                {/* Excluir Conta */}
-                <div className="p-4 bg-gray-700 rounded-lg">
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <div className="text-white font-medium">Excluir Conta</div>
-                      <div className="text-gray-400 text-sm">Remover permanentemente sua conta e dados</div>
-                    </div>
-                    <button 
-                      onClick={() => setIsDeleting(!isDeleting)}
-                      className="text-red-400 hover:text-red-300 transition-colors font-medium"
-                    >
-                      {isDeleting ? 'Cancelar' : 'Excluir'}
-                    </button>
-                  </div>
-                  
-                  {isDeleting && (
-                    <div className="space-y-4">
-                      <div className="bg-red-900/20 border border-red-500 rounded-lg p-4">
-                        <div className="flex items-center space-x-2 text-red-400 mb-2">
-                          <AlertTriangle className="w-5 h-5" />
-                          <span className="font-medium">Atenção!</span>
-                        </div>
-                        <p className="text-red-300 text-sm">
-                          Esta ação é irreversível. Todos os seus dados serão permanentemente removidos.
-                        </p>
-                      </div>
-                      
-                      <input
-                        type="text"
-                        value={deleteConfirm}
-                        onChange={(e) => setDeleteConfirm(e.target.value)}
-                        className="w-full bg-gray-600 rounded-lg p-3 text-white border border-gray-500 focus:border-red-500 focus:outline-none"
-                        placeholder='Digite "DELETAR" para confirmar'
-                      />
-                      
-                      <button
-                        onClick={handleDeleteAccount}
-                        disabled={loadingAction === 'delete' || deleteConfirm !== 'DELETAR'}
-                        className="w-full bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-lg transition-colors disabled:opacity-50"
-                      >
-                        {loadingAction === 'delete' ? 'Excluindo...' : 'Confirmar Exclusão'}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Análise de Uso */}
-            <div className="bg-gray-800 rounded-lg p-6">
-              <div className="flex items-center space-x-2 mb-6">
-                <BarChart3 className="w-5 h-5 text-purple-400" />
-                <h3 className="text-lg font-semibold">Análise de Uso</h3>
-              </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="bg-gray-700 rounded-lg p-4">
-                  <div className="text-gray-400 text-sm mb-2">Eficiência das Listas</div>
-                  <div className="text-gray-400 text-sm mb-1">Média de itens por lista</div>
-                  <div className="text-3xl font-bold text-green-400">{userStats?.avg_items_per_list || 0}</div>
-                </div>
-                
-                <div className="bg-gray-700 rounded-lg p-4">
-                  <div className="text-gray-400 text-sm mb-2">Funcionalidade Favorita</div>
-                  <div className="text-2xl font-bold text-green-400 mb-1">{userStats?.favorite_feature || 'Reconhecimento IA'}</div>
-                  <div className="text-gray-400 text-sm">Mais utilizada</div>
-                </div>
-                
-                <div className="bg-gray-700 rounded-lg p-4">
-                  <div className="text-gray-400 text-sm mb-2">Atividade Mensal</div>
-                  <div className="text-gray-400 text-sm mb-1">Listas criadas</div>
-                  <div className="text-3xl font-bold text-blue-400">{userStats?.monthly_lists || 0}</div>
-                  <div className="text-gray-400 text-sm">IA utilizada</div>
-                  <div className="text-orange-400 font-bold">{userStats?.monthly_ai_usage || 0}x</div>
-                </div>
-                
-                <div className="bg-gray-700 rounded-lg p-4">
-                  <div className="text-gray-400 text-sm mb-2">Economia Total</div>
-                  <div className="text-3xl font-bold text-green-400 mb-1">{formatCurrency(userStats?.total_spent || 0)}</div>
-                  <div className="text-gray-400 text-sm">Gasto registrado</div>
+                  <span className="text-sm font-medium text-gray-900">
+                    {lastUpdate.toLocaleTimeString('pt-BR')}
+                  </span>
                 </div>
               </div>
             </div>
