@@ -19,6 +19,7 @@ const cliWebhookSecret = process.env.STRIPE_CLI_WEBHOOK_SECRET || 'whsec_9d104f1
 // MODO DEBUG - aceita CLI webhook secret se não houver webhook secret configurado
 const effectiveSecret = webhookSecret || cliWebhookSecret
 
+// 🔑 SERVICE_ROLE_KEY CONFIGURADA - Deploy forçado
 console.log('🔧 [WEBHOOK] Configuração:', {
   stripeConfigured: !!stripeSecretKey,
   webhookSecret: !!webhookSecret ? '✅ Configurado' : '❌ Usando CLI secret',
