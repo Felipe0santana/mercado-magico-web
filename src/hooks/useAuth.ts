@@ -18,7 +18,6 @@ export function useAuth() {
   const [user, setUser] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const [lastRefresh, setLastRefresh] = useState<number>(0)
   const [lastMetadataHash, setLastMetadataHash] = useState<string>('')
 
   // Função para gerar hash dos metadados para detectar mudanças
@@ -34,28 +33,27 @@ export function useAuth() {
 
   const refreshUser = useCallback(async (forceRefresh = false) => {
     try {
-      setIsRefreshing(true)
-      console.log('🔄 [AUTH] Atualizando dados do usuário...')
-      
-      // Forçar refresh do token para pegar dados atualizados
-      const { data: { session }, error: sessionError } = await supabase.auth.refreshSession()
-      
-      if (sessionError) {
-        console.error('❌ [AUTH] Erro ao atualizar sessão:', sessionError)
+      if (isRefreshing && !forceRefresh) {
+        console.log('⏳ [AUTH] Refresh já em andamento, ignorando...')
         return
       }
 
+      setIsRefreshing(true)
+      console.log('🔄 [AUTH] Atualizando dados do usuário...')
+      
       const { data: { user: authUser }, error: authError } = await supabase.auth.getUser()
       
       if (authError) {
         console.error('❌ [AUTH] Erro ao buscar usuário:', authError)
         setUser(null)
+        setLoading(false)
         return
       }
 
       if (!authUser) {
         console.log('⚠️ [AUTH] Usuário não autenticado')
         setUser(null)
+        setLoading(false)
         return
       }
 
@@ -63,8 +61,8 @@ export function useAuth() {
       const newMetadataHash = generateMetadataHash(authUser.user_metadata)
       const hasChanges = newMetadataHash !== lastMetadataHash || forceRefresh
 
-      if (hasChanges) {
-        console.log('🔄 [AUTH] Detectadas mudanças nos metadados, atualizando...')
+      if (hasChanges || !user) {
+        console.log('🔄 [AUTH] Detectadas mudanças nos metadados ou primeira carga, atualizando...')
         setLastMetadataHash(newMetadataHash)
 
         const userProfile: UserProfile = {
@@ -77,7 +75,7 @@ export function useAuth() {
           force_refresh: authUser.user_metadata?.force_refresh
         }
 
-        console.log('✅ [AUTH] Usuário atualizado automaticamente:', {
+        console.log('✅ [AUTH] Usuário atualizado:', {
           email: userProfile.email,
           plan: userProfile.subscription_plan,
           credits: userProfile.credits_remaining === -1 ? 'ilimitados' : userProfile.credits_remaining,
@@ -86,7 +84,7 @@ export function useAuth() {
 
         setUser(userProfile)
         
-        // Mostrar notificação de atualização se não for a primeira carga
+        // Mostrar notificação de atualização se houve mudança de plano
         if (user && user.subscription_plan !== userProfile.subscription_plan) {
           console.log(`🎉 [AUTH] Plano atualizado: ${user.subscription_plan} → ${userProfile.subscription_plan}`)
           
@@ -101,19 +99,21 @@ export function useAuth() {
       } else {
         console.log('ℹ️ [AUTH] Nenhuma mudança detectada nos metadados')
       }
+      
+      setLoading(false)
     } catch (error) {
       console.error('❌ [AUTH] Erro ao atualizar usuário:', error)
+      setLoading(false)
     } finally {
       setIsRefreshing(false)
     }
-  }, [lastMetadataHash, generateMetadataHash, user])
+  }, [lastMetadataHash, generateMetadataHash, user, isRefreshing])
 
   // Inicialização e listener de auth
   useEffect(() => {
-    console.log('🚀 [AUTH] Inicializando useAuth com sistema automático...')
+    console.log('🚀 [AUTH] Inicializando useAuth...')
     
     let mounted = true
-    let pollingInterval: NodeJS.Timeout | null = null
     
     // Função para carregar usuário inicial
     const loadInitialUser = async () => {
@@ -164,14 +164,6 @@ export function useAuth() {
           })
         }
         
-        // Iniciar polling automático para detectar mudanças
-        console.log('🔄 [AUTH] Iniciando polling automático...')
-        pollingInterval = setInterval(async () => {
-          if (mounted) {
-            await refreshUser()
-          }
-        }, 2000) // Verificar a cada 2 segundos
-        
       } catch (error) {
         console.error('❌ [AUTH] Erro inesperado:', error)
         if (mounted) {
@@ -193,31 +185,7 @@ export function useAuth() {
         
         if (event === 'SIGNED_IN' && session?.user) {
           console.log('✅ [AUTH] Login detectado:', session.user.email)
-          
-          // Inicializar hash dos metadados
-          const initialHash = generateMetadataHash(session.user.user_metadata)
-          setLastMetadataHash(initialHash)
-          
-          const userProfile: UserProfile = {
-            id: session.user.id,
-            email: session.user.email || '',
-            subscription_plan: session.user.user_metadata?.subscription_plan || 'free',
-            subscription_status: session.user.user_metadata?.subscription_status || 'inactive',
-            credits_remaining: session.user.user_metadata?.credits_remaining ?? 10,
-            updated_at: session.user.user_metadata?.updated_at,
-            force_refresh: session.user.user_metadata?.force_refresh
-          }
-          
-          setUser(userProfile)
-          setLoading(false)
-          
-          // Iniciar polling automático após login
-          if (pollingInterval) clearInterval(pollingInterval)
-          pollingInterval = setInterval(async () => {
-            if (mounted) {
-              await refreshUser()
-            }
-          }, 2000)
+          await refreshUser(true)
           
         } else if (event === 'SIGNED_OUT') {
           console.log('👋 [AUTH] Logout detectado')
@@ -225,16 +193,8 @@ export function useAuth() {
           setLoading(false)
           setLastMetadataHash('')
           
-          // Parar polling após logout
-          if (pollingInterval) {
-            clearInterval(pollingInterval)
-            pollingInterval = null
-          }
-          
         } else if (event === 'TOKEN_REFRESHED' && session?.user) {
           console.log('🔄 [AUTH] Token atualizado automaticamente:', session.user.email)
-          
-          // Verificar mudanças após refresh do token
           await refreshUser()
           
         } else {
@@ -247,54 +207,63 @@ export function useAuth() {
     return () => {
       mounted = false
       subscription.unsubscribe()
-      if (pollingInterval) {
-        clearInterval(pollingInterval)
-      }
     }
   }, [refreshUser, generateMetadataHash])
 
-  // Polling inteligente para verificar mudanças após pagamentos
+  // Polling inteligente apenas após pagamentos (detectado por mudanças específicas)
   useEffect(() => {
     if (!user) return
 
-    let intensivePollingTimeout: NodeJS.Timeout | null = null
+    let checkInterval: NodeJS.Timeout | null = null
+    let timeoutId: NodeJS.Timeout | null = null
 
-    const checkForUpdates = async () => {
-      try {
-        const { data: { user: authUser } } = await supabase.auth.getUser()
-        if (!authUser) return
+    // Verificar se há indicação de pagamento recente
+    const hasRecentPayment = user.force_refresh && 
+      user.force_refresh > (Date.now() - 120000) // Últimos 2 minutos
 
-        const currentForceRefresh = authUser.user_metadata?.force_refresh || 0
-        const currentUpdatedAt = authUser.user_metadata?.updated_at
-
-        // Se houve mudança no force_refresh ou updated_at, atualizar
-        if (currentForceRefresh > lastRefresh || 
-            (currentUpdatedAt && currentUpdatedAt !== user.updated_at)) {
-          
-          console.log('🔄 [AUTH] Detectada mudança via polling intensivo, atualizando...')
-          setLastRefresh(currentForceRefresh)
-          await refreshUser(true)
+    if (hasRecentPayment) {
+      console.log('💳 [AUTH] Pagamento recente detectado, iniciando verificação automática...')
+      
+      let attempts = 0
+      const maxAttempts = 30 // 30 tentativas = 1 minuto
+      
+      checkInterval = setInterval(async () => {
+        attempts++
+        console.log(`🔍 [AUTH] Verificação automática ${attempts}/${maxAttempts}...`)
+        
+        try {
+          const { data: { user: authUser } } = await supabase.auth.getUser()
+          if (authUser) {
+            const newHash = generateMetadataHash(authUser.user_metadata)
+            if (newHash !== lastMetadataHash) {
+              console.log('✅ [AUTH] Mudança detectada via verificação automática!')
+              await refreshUser(true)
+              if (checkInterval) clearInterval(checkInterval)
+              return
+            }
+          }
+        } catch (error) {
+          console.error('❌ [AUTH] Erro na verificação automática:', error)
         }
-      } catch (error) {
-        console.error('❌ [AUTH] Erro no polling intensivo:', error)
-      }
+        
+        if (attempts >= maxAttempts) {
+          console.log('⏰ [AUTH] Verificação automática finalizada')
+          if (checkInterval) clearInterval(checkInterval)
+        }
+      }, 2000) // A cada 2 segundos por 1 minuto
+      
+      // Timeout de segurança
+      timeoutId = setTimeout(() => {
+        if (checkInterval) clearInterval(checkInterval)
+        console.log('⏰ [AUTH] Timeout da verificação automática')
+      }, 120000) // 2 minutos máximo
     }
-
-    // Polling intensivo por 60 segundos após login/mudança
-    console.log('🚀 [AUTH] Iniciando polling intensivo por 60 segundos...')
-    const intensiveInterval = setInterval(checkForUpdates, 1000) // A cada 1 segundo
-    intensivePollingTimeout = setTimeout(() => {
-      clearInterval(intensiveInterval)
-      console.log('⏰ [AUTH] Polling intensivo finalizado')
-    }, 60000) // Por 60 segundos
 
     return () => {
-      clearInterval(intensiveInterval)
-      if (intensivePollingTimeout) {
-        clearTimeout(intensivePollingTimeout)
-      }
+      if (checkInterval) clearInterval(checkInterval)
+      if (timeoutId) clearTimeout(timeoutId)
     }
-  }, [user?.id, lastRefresh, refreshUser])
+  }, [user?.force_refresh, lastMetadataHash, refreshUser, generateMetadataHash])
 
   const signIn = async (email: string, password: string) => {
     try {
@@ -357,7 +326,8 @@ export function useAuth() {
 
   const signOut = async () => {
     try {
-      console.log('🚪 [AUTH] Fazendo logout...')
+      setLoading(true)
+      console.log('👋 [AUTH] Fazendo logout...')
       
       const { error } = await supabase.auth.signOut()
       
@@ -372,28 +342,16 @@ export function useAuth() {
     } catch (error) {
       console.error('❌ [AUTH] Erro no signOut:', error)
       throw error
+    } finally {
+      setLoading(false)
     }
   }
 
-  const resetPassword = async (email: string) => {
-    try {
-      console.log(`🔑 [AUTH] Enviando email de recuperação para: ${email}`)
-      
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`,
-      })
-
-      if (error) {
-        console.error('❌ [AUTH] Erro ao enviar email de recuperação:', error)
-        throw error
-      }
-
-      console.log('✅ [AUTH] Email de recuperação enviado com sucesso')
-    } catch (error) {
-      console.error('❌ [AUTH] Erro no resetPassword:', error)
-      throw error
-    }
-  }
+  // Função para forçar refresh manual (para usar após pagamentos)
+  const forceRefresh = useCallback(async () => {
+    console.log('🔄 [AUTH] Refresh manual solicitado...')
+    await refreshUser(true)
+  }, [refreshUser])
 
   return {
     user,
@@ -402,7 +360,6 @@ export function useAuth() {
     signIn,
     signUp,
     signOut,
-    resetPassword,
-    refreshUser: () => refreshUser(true)
+    refreshUser: forceRefresh
   }
 } 
