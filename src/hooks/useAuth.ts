@@ -140,41 +140,65 @@ export function useAuth() {
     }
   }, [])
 
-  // Função para atualizar dados do usuário
-  const refreshUser = useCallback(async () => {
-    console.log('🔄 [AUTH] Atualizando dados do usuário...')
-    await fetchUser()
-  }, [fetchUser])
-
-  // Inicialização e listener de mudanças de auth
+  // Sistema automático de detecção de mudanças
   useEffect(() => {
-    console.log('🚀 [AUTH] Inicializando hook useAuth')
+    console.log('🚀 [AUTH] Inicializando sistema automático')
     
     // Buscar usuário inicial
     fetchUser()
 
-    // Listener para mudanças de autenticação
+    // Listener AUTOMÁTICO para mudanças de autenticação
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        console.log(`🔔 [AUTH] Evento: ${event}`, session?.user?.email || 'sem usuário')
+        console.log(`🔔 [AUTH] Evento automático: ${event}`, session?.user?.email || 'sem usuário')
         
         if (event === 'SIGNED_IN' && session?.user) {
           const userData = convertUserData(session.user)
           setUser(userData)
           setLoading(false)
+          console.log('🎉 [AUTH] Login automático detectado:', userData)
         } else if (event === 'SIGNED_OUT') {
           setUser(null)
           setLoading(false)
+          console.log('👋 [AUTH] Logout automático detectado')
         } else if (event === 'TOKEN_REFRESHED' && session?.user) {
           const userData = convertUserData(session.user)
           setUser(userData)
+          console.log('🔄 [AUTH] Token atualizado automaticamente:', userData)
+        } else if (event === 'USER_UPDATED' && session?.user) {
+          const userData = convertUserData(session.user)
+          setUser(userData)
+          console.log('✨ [AUTH] Usuário atualizado automaticamente:', userData)
         }
       }
     )
 
+    // Listener para mudanças de visibilidade da página (detecta quando volta do Stripe)
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        console.log('👁️ [AUTH] Página visível - verificando atualizações automáticas')
+        setTimeout(() => {
+          fetchUser()
+        }, 1000) // Aguarda 1 segundo para garantir que o webhook processou
+      }
+    }
+
+    // Listener para mudanças de foco da janela
+    const handleFocus = () => {
+      console.log('🎯 [AUTH] Janela em foco - verificando atualizações automáticas')
+      setTimeout(() => {
+        fetchUser()
+      }, 1000)
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('focus', handleFocus)
+
     return () => {
-      console.log('🧹 [AUTH] Limpando listeners')
+      console.log('🧹 [AUTH] Limpando listeners automáticos')
       subscription.unsubscribe()
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('focus', handleFocus)
     }
   }, [fetchUser, convertUserData])
 
@@ -183,7 +207,6 @@ export function useAuth() {
     loading,
     signIn,
     signUp,
-    signOut,
-    refreshUser
+    signOut
   }
 } 
