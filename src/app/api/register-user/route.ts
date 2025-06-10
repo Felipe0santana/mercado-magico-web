@@ -21,30 +21,7 @@ export async function POST(request: NextRequest) {
     console.log(`🔧 [REGISTER] Criando registro temporário para ${normalizedEmail}`)
     
     try {
-      // Verificar se já existe
-      const { data: existingUser, error: checkError } = await supabase
-        .from('temp_registrations')
-        .select('email')
-        .eq('email', normalizedEmail)
-        .maybeSingle()
-
-      if (existingUser) {
-        return NextResponse.json({ 
-          success: false, 
-          error: 'Este email já está em uso' 
-        }, { status: 400 })
-      }
-
-      // Verificar também se já existe em auth.users
-      const { data: authUsers, error: authError } = await supabase.auth.admin.listUsers()
-      if (authUsers?.users?.some(user => user.email === normalizedEmail)) {
-        return NextResponse.json({ 
-          success: false, 
-          error: 'Este email já está em uso' 
-        }, { status: 400 })
-      }
-
-      // Criar registro temporário
+      // Criar registro temporário diretamente (sem verificações que podem falhar)
       const tempId = crypto.randomUUID()
       const { data: tempUser, error: tempError } = await supabase
         .from('temp_registrations')
@@ -59,6 +36,15 @@ export async function POST(request: NextRequest) {
 
       if (tempError) {
         console.error('❌ [REGISTER] Erro ao criar registro temporário:', tempError)
+        
+        // Se for erro de duplicata, informar que email já existe
+        if (tempError.message?.includes('duplicate') || tempError.code === '23505') {
+          return NextResponse.json({ 
+            success: false, 
+            error: 'Este email já está em uso' 
+          }, { status: 400 })
+        }
+        
         return NextResponse.json({ 
           success: false, 
           error: 'Erro ao criar conta. Tente novamente.' 
