@@ -24,8 +24,8 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    // ✨ REGISTRO USANDO SUPABASE AUTH (como no app mobile)
-    console.log(`📝 [REGISTER] Tentando criar usuário com Supabase Auth: ${email}`)
+    // ✨ PRIMEIRA TENTATIVA: SUPABASE AUTH (como no app mobile)
+    console.log(`📝 [REGISTER] Tentativa 1: Supabase Auth para ${email}`)
     console.log(`🔧 [REGISTER] Supabase URL: ${process.env.NEXT_PUBLIC_SUPABASE_URL}`)
     console.log(`🔧 [REGISTER] Supabase Key configurada: ${!!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`)
     
@@ -42,98 +42,103 @@ export async function POST(request: NextRequest) {
 
       console.log(`🔍 [REGISTER] Resultado do signUp - Data: ${!!data}, Error: ${!!error}`)
       
-      if (error) {
-        console.error('❌ [REGISTER] Erro detalhado no registro:', {
-          message: error.message,
-          status: error.status,
-          name: error.name
+      if (!error && data.user) {
+        console.log('✅ [REGISTER] Usuário criado com sucesso via Supabase Auth! ID:', data.user.id)
+        console.log('📋 [REGISTER] Dados do usuário:', {
+          id: data.user.id,
+          email: data.user.email,
+          email_confirmed: !!data.user.email_confirmed_at
         })
         
-        // Tratar erros específicos
-        if (error.message.includes('already registered') || error.message.includes('already been registered')) {
+        // O perfil será criado automaticamente pelo trigger
+        // Aguardar um pouco para garantir que o trigger executou
+        console.log('⏳ [REGISTER] Aguardando trigger de criação de perfil...')
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        
+        return NextResponse.json({ 
+          success: true, 
+          message: data.user.email_confirmed_at 
+            ? 'Conta criada com sucesso! Você já pode fazer login.'
+            : 'Conta criada! Verifique seu email para confirmar.',
+          user: {
+            id: data.user.id,
+            email: data.user.email,
+            full_name: data.user.user_metadata?.full_name,
+            email_confirmed: !!data.user.email_confirmed_at,
+            needs_confirmation: !data.user.email_confirmed_at
+          },
+          method: 'supabase_auth'
+        })
+      }
+
+      // Se chegou aqui, houve erro na primeira tentativa
+      console.warn('⚠️ [REGISTER] Supabase Auth falhou:', error?.message)
+      
+      // Tratar erros específicos que devem retornar imediatamente
+      if (error?.message?.includes('already registered') || error?.message?.includes('already been registered')) {
+        return NextResponse.json({ 
+          success: false, 
+          error: 'Este email já está em uso' 
+        }, { status: 400 })
+      }
+      
+    } catch (authError) {
+      console.warn('⚠️ [REGISTER] Erro na chamada do Supabase Auth:', authError)
+    }
+
+    // ✨ SEGUNDA TENTATIVA: FUNÇÃO DO BANCO DE DADOS
+    console.log(`🔧 [REGISTER] Tentativa 2: Função do banco para ${email}`)
+    
+    try {
+      const { data: dbResult, error: dbError } = await supabase
+        .rpc('create_user_with_profile', {
+          user_email: email.trim(),
+          user_password: password,
+          user_full_name: fullName || email.split('@')[0]
+        })
+
+      if (dbError) {
+        console.error('❌ [REGISTER] Erro na função do banco:', dbError)
+        throw dbError
+      }
+
+      console.log('🔧 [REGISTER] Resultado da função do banco:', dbResult)
+
+      if (dbResult?.success) {
+        console.log('✅ [REGISTER] Usuário criado com sucesso via função do banco!')
+        return NextResponse.json({
+          ...dbResult,
+          method: 'database_function'
+        })
+      } else {
+        console.error('❌ [REGISTER] Função do banco retornou erro:', dbResult?.error)
+        
+        // Se for erro de email já em uso, retornar erro específico
+        if (dbResult?.code === 'user_already_exists') {
           return NextResponse.json({ 
             success: false, 
             error: 'Este email já está em uso' 
           }, { status: 400 })
         }
         
-        if (error.message.includes('Password should be at least')) {
-          return NextResponse.json({ 
-            success: false, 
-            error: 'A senha deve ter pelo menos 6 caracteres' 
-          }, { status: 400 })
-        }
-        
-        if (error.message.includes('Invalid email')) {
-          return NextResponse.json({ 
-            success: false, 
-            error: 'Email inválido' 
-          }, { status: 400 })
-        }
-        
-        return NextResponse.json({ 
-          success: false, 
-          error: 'Erro ao criar conta. Tente novamente.',
-          details: error.message,
-          debug: {
-            error_name: error.name,
-            error_status: error.status,
-            supabase_configured: !!process.env.NEXT_PUBLIC_SUPABASE_URL
-          }
-        }, { status: 400 })
+        throw new Error(dbResult?.error || 'Erro na função do banco')
       }
-
-      if (!data.user) {
-        console.error('❌ [REGISTER] Data.user é null/undefined')
-        return NextResponse.json({ 
-          success: false, 
-          error: 'Erro inesperado ao criar usuário',
-          debug: {
-            data_exists: !!data,
-            user_exists: !!data?.user
-          }
-        }, { status: 500 })
-      }
-
-      console.log('✅ [REGISTER] Usuário criado com sucesso! ID:', data.user.id)
-      console.log('📋 [REGISTER] Dados do usuário:', {
-        id: data.user.id,
-        email: data.user.email,
-        email_confirmed: !!data.user.email_confirmed_at
-      })
       
-      // O perfil será criado automaticamente pelo trigger
-      // Aguardar um pouco para garantir que o trigger executou
-      console.log('⏳ [REGISTER] Aguardando trigger de criação de perfil...')
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      
-      return NextResponse.json({ 
-        success: true, 
-        message: data.user.email_confirmed_at 
-          ? 'Conta criada com sucesso! Você já pode fazer login.'
-          : 'Conta criada! Verifique seu email para confirmar.',
-        user: {
-          id: data.user.id,
-          email: data.user.email,
-          full_name: data.user.user_metadata?.full_name,
-          email_confirmed: !!data.user.email_confirmed_at,
-          needs_confirmation: !data.user.email_confirmed_at
-        }
-      })
-      
-    } catch (authError) {
-      console.error('❌ [REGISTER] Erro na chamada do Supabase Auth:', authError)
-      return NextResponse.json({ 
-        success: false, 
-        error: 'Erro de conexão com o serviço de autenticação',
-        details: authError instanceof Error ? authError.message : 'Erro desconhecido',
-        debug: {
-          error_type: typeof authError,
-          supabase_url: process.env.NEXT_PUBLIC_SUPABASE_URL,
-          has_anon_key: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-        }
-      }, { status: 500 })
+    } catch (dbError) {
+      console.error('❌ [REGISTER] Erro na função do banco:', dbError)
     }
+
+    // ✨ Se chegou aqui, todas as tentativas falharam
+    console.error('❌ [REGISTER] Todas as tentativas falharam para:', email)
+    return NextResponse.json({ 
+      success: false, 
+      error: 'Erro ao criar conta. O serviço está temporariamente indisponível. Tente novamente em alguns minutos.',
+      details: 'Falha em todos os métodos de registro',
+      debug: {
+        supabase_url: process.env.NEXT_PUBLIC_SUPABASE_URL,
+        has_anon_key: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+      }
+    }, { status: 500 })
 
   } catch (error) {
     console.error('❌ [REGISTER] Erro inesperado geral:', error)
@@ -169,8 +174,11 @@ export async function GET() {
     return NextResponse.json({ 
       message: 'API de registro de usuário',
       status: 'ativa',
-      method: 'Supabase Auth + Profiles (como app mobile)',
-      note: 'Sistema simplificado e robusto seguindo padrão do app mobile',
+      methods: [
+        'Supabase Auth + Profiles (Primário)',
+        'Função do Banco de Dados (Fallback)'
+      ],
+      note: 'Sistema robusto com múltiplas tentativas seguindo padrão do app mobile',
       stats: {
         total_profiles: stats?.length || 0,
         by_plan: planCount,
