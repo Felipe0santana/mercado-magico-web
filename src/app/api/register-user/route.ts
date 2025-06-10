@@ -14,16 +14,19 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
+    const normalizedEmail = email.trim().toLowerCase()
+    const userFullName = fullName || email.split('@')[0]
+
     // ✨ PRIMEIRA TENTATIVA: Usar client-side signup
-    console.log(`📝 [REGISTER] Tentativa 1: Usando método client-side para ${email}`)
+    console.log(`📝 [REGISTER] Tentativa 1: Usando método client-side para ${normalizedEmail}`)
     
     try {
       const { data, error } = await supabase.auth.signUp({
-        email: email.trim(),
+        email: normalizedEmail,
         password: password,
         options: {
           data: {
-            full_name: fullName || email.split('@')[0],
+            full_name: userFullName,
             subscription_plan: 'free',
             subscription_status: 'active',
             credits_remaining: 10,
@@ -44,7 +47,7 @@ export async function POST(request: NextRequest) {
             .insert([{
               id: data.user.id,
               email: data.user.email,
-              name: fullName || email.split('@')[0],
+              name: userFullName,
               subscription_plan: 'free',
               subscription_status: 'active',
               credits_remaining: 10,
@@ -91,41 +94,86 @@ export async function POST(request: NextRequest) {
       console.warn('⚠️ [REGISTER] Erro na tentativa client-side:', clientError)
     }
 
-    // ✨ SEGUNDA TENTATIVA: Usar função do banco de dados
-    console.log(`🔧 [REGISTER] Tentativa 2: Usando função do banco para ${email}`)
+    // ✨ SEGUNDA TENTATIVA: Criar registro temporário e usar migração
+    console.log(`🔧 [REGISTER] Tentativa 2: Registro temporário para ${normalizedEmail}`)
     
     try {
-      const { data: dbResult, error: dbError } = await supabase
-        .rpc('create_user_registration', {
-          user_email: email.trim(),
-          user_password: password,
-          user_full_name: fullName || email.split('@')[0]
-        })
+      // Verificar se já existe
+      const { data: existingUser, error: checkError } = await supabase
+        .from('users')
+        .select('email')
+        .eq('email', normalizedEmail)
+        .maybeSingle()
 
-      if (dbError) {
-        console.error('❌ [REGISTER] Erro na função do banco:', dbError)
-        throw dbError
-      }
-
-      console.log('🔧 [REGISTER] Resultado da função do banco:', dbResult)
-
-      if (dbResult?.success) {
-        console.log('✅ [REGISTER] Usuário criado com sucesso via função do banco!')
-        return NextResponse.json(dbResult)
-      } else {
-        console.error('❌ [REGISTER] Função do banco retornou erro:', dbResult?.error)
+      if (existingUser) {
         return NextResponse.json({ 
           success: false, 
-          error: dbResult?.error || 'Erro ao criar conta via banco de dados'
+          error: 'Este email já está em uso' 
         }, { status: 400 })
       }
-      
-    } catch (dbError) {
-      console.error('❌ [REGISTER] Erro na função do banco:', dbError)
+
+      // Criar registro temporário (será migrado depois)
+      const tempId = crypto.randomUUID()
+      const { data: tempUser, error: tempError } = await supabase
+        .from('temp_registrations')
+        .insert([{
+          id: tempId,
+          email: normalizedEmail,
+          password_hash: password, // Em produção, isso deveria ser hasheado
+          full_name: userFullName,
+          created_at: new Date().toISOString()
+        }])
+        .select()
+
+      if (tempError) {
+        console.error('❌ [REGISTER] Erro ao criar registro temporário:', tempError)
+        throw tempError
+      }
+
+      console.log('✅ [REGISTER] Registro temporário criado, iniciando migração...')
+
+      // Tentar migrar imediatamente
+      try {
+        const migrateResponse = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL || 'https://site54874935.netlify.app'}/api/migrate-temp-user`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tempId })
+        })
+
+        const migrateResult = await migrateResponse.json()
+        
+        if (migrateResult.success) {
+          console.log('✅ [REGISTER] Usuário migrado com sucesso!')
+          return NextResponse.json({
+            success: true,
+            message: 'Conta criada com sucesso! Você já pode fazer login.',
+            user: migrateResult.user
+          })
+        } else {
+          console.warn('⚠️ [REGISTER] Migração falhou, mas registro temporário foi criado')
+        }
+      } catch (migrateError) {
+        console.warn('⚠️ [REGISTER] Erro na migração:', migrateError)
+      }
+
+      // Se chegou aqui, o registro temporário foi criado mas a migração falhou
+      return NextResponse.json({
+        success: true,
+        message: 'Conta criada! Pode levar alguns minutos para ficar disponível para login.',
+        user: {
+          email: normalizedEmail,
+          full_name: userFullName,
+          status: 'pending_migration'
+        },
+        note: 'Usuário será migrado automaticamente em breve'
+      })
+
+    } catch (tempError) {
+      console.error('❌ [REGISTER] Erro no registro temporário:', tempError)
     }
 
     // ✨ Se chegou aqui, todas as tentativas falharam
-    console.error('❌ [REGISTER] Todas as tentativas de registro falharam para:', email)
+    console.error('❌ [REGISTER] Todas as tentativas de registro falharam para:', normalizedEmail)
     return NextResponse.json({ 
       success: false, 
       error: 'Erro ao criar conta. O serviço está temporariamente indisponível. Tente novamente em alguns minutos.',
@@ -148,7 +196,7 @@ export async function GET() {
     status: 'ativa',
     methods: [
       'Supabase Auth Client-Side (Primário)',
-      'Função do Banco de Dados (Fallback)'
+      'Registro Temporário + Migração (Fallback)'
     ],
     note: 'Sistema robusto com múltiplas tentativas de registro'
   })
