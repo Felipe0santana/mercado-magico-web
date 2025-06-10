@@ -1,5 +1,5 @@
 [build]
-  command = "npm run clean && npm run build"
+  command = "npm run build"
   publish = ".next"
 
 [[plugins]]
@@ -12,13 +12,13 @@
 
 # Configuração para Next.js
 [context.production]
-  command = "npm run clean && npm run build"
+  command = "npm run build"
 
 [context.deploy-preview]
-  command = "npm run clean && npm run build"
+  command = "npm run build"
 
 [context.branch-deploy]
-  command = "npm run clean && npm run build"
+  command = "npm run build"
 
 # Headers para otimização
 [[headers]]

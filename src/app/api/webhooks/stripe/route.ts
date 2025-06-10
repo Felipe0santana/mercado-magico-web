@@ -119,63 +119,89 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        // Buscar usuário pelo email
-        console.log(`🔍 [WEBHOOK] Buscando usuário: ${customerEmail}`)
-        const { data: users, error: listError } = await supabaseAdmin.auth.admin.listUsers()
+        // ✨ NOVA VERSÃO: Usar função do banco de dados para maior robustez
+        console.log(`🔍 [WEBHOOK] Usando função do banco para processar: ${customerEmail}`)
         
-        if (listError) {
-          console.error('❌ [WEBHOOK] Erro ao listar usuários:', listError)
-          return NextResponse.json({ error: 'Erro ao buscar usuário' }, { status: 500 })
-        }
-
-        const user = users.users.find(u => u.email === customerEmail)
-        if (!user) {
-          console.error(`❌ [WEBHOOK] Usuário não encontrado: ${customerEmail}`)
-          return NextResponse.json({ error: 'Usuário não encontrado' }, { status: 404 })
-        }
-
-        console.log(`👤 [WEBHOOK] Usuário encontrado: ${user.id}`)
-        console.log(`📊 [WEBHOOK] Metadados atuais:`, user.user_metadata)
-
-        // Preparar dados de atualização
-        const currentMetadata = user.user_metadata || {}
-        const updateData = {
-          user_metadata: {
-            ...currentMetadata,
+        const { data: webhookResult, error: webhookError } = await supabaseAdmin
+          .rpc('process_stripe_webhook', {
+            customer_email: customerEmail,
             subscription_plan: planConfig.plan,
             subscription_status: 'active',
-            credits_remaining: planConfig.credits,
-            updated_at: new Date().toISOString(),
-            last_payment: session.id,
-            last_payment_date: new Date().toISOString(),
-            stripe_customer_id: session.customer,
-            // Forçar mudança para trigger do Realtime
-            webhook_update_count: (currentMetadata.webhook_update_count || 0) + 1
+            credits_amount: planConfig.credits,
+            stripe_customer_id: session.customer || null,
+            stripe_subscription_id: session.subscription || null
+          })
+
+        if (webhookError) {
+          console.error('❌ [WEBHOOK] Erro na função do banco:', webhookError)
+          return NextResponse.json({ error: 'Erro na função do banco' }, { status: 500 })
+        }
+
+        const result = webhookResult as any
+
+        if (!result.success) {
+          console.error(`❌ [WEBHOOK] Função retornou erro: ${result.error}`)
+          
+          // Se usuário não foi encontrado, tentar buscar com sugestões
+          if (result.error === 'User not found') {
+            const { data: searchResult, error: searchError } = await supabaseAdmin
+              .rpc('find_user_by_email', { search_email: customerEmail })
+            
+            if (!searchError && searchResult) {
+              console.log(`🔍 [WEBHOOK] Busca por usuário:`, searchResult)
+              if (searchResult.suggestions?.length > 0) {
+                console.log(`💡 [WEBHOOK] Emails similares encontrados:`, searchResult.suggestions)
+              }
+            }
           }
+          
+          return NextResponse.json({ 
+            error: result.error,
+            details: result,
+            webhook_session: session.id 
+          }, { status: 404 })
         }
 
-        console.log(`🔄 [WEBHOOK] Atualizando usuário com dados:`, updateData.user_metadata)
+        console.log(`✅ [WEBHOOK] Usuário ${customerEmail} atualizado com sucesso via função do banco`)
+        console.log(`📊 [WEBHOOK] Resultado:`, {
+          user_id: result.user_id,
+          email: result.email,
+          normalized_email: result.normalized_email,
+          plan: result.plan,
+          credits: result.credits,
+          status: result.status
+        })
 
-        // Atualizar user_metadata
-        const { data: updatedUser, error: updateError } = await supabaseAdmin.auth.admin.updateUserById(user.id, updateData)
-
-        if (updateError) {
-          console.error('❌ [WEBHOOK] Erro ao atualizar usuário:', updateError)
-          return NextResponse.json({ error: 'Erro ao atualizar usuário' }, { status: 500 })
-        }
-
-        console.log(`✅ [WEBHOOK] Usuário ${customerEmail} atualizado para plano ${planConfig.plan}`)
-        console.log(`📊 [WEBHOOK] Novos metadados:`, updatedUser.user?.user_metadata)
-
-        // Log de sucesso detalhado
-        console.log(`🎉 [WEBHOOK] SUCESSO COMPLETO:`)
+        // ✅ Log de sucesso detalhado  
+        console.log(`🎉 [WEBHOOK] SUCESSO COMPLETO (v2):`)
         console.log(`   - Evento: ${event.type} [${event.id}]`)
         console.log(`   - Session: ${session.id}`)
-        console.log(`   - Email: ${customerEmail}`)
-        console.log(`   - User ID: ${user.id}`)
+        console.log(`   - Email Original: ${customerEmail}`)
+        console.log(`   - Email Normalizado: ${result.normalized_email}`)
+        console.log(`   - User ID: ${result.user_id}`)
         console.log(`   - Price ID: ${priceId}`)
         console.log(`   - Plano: ${planConfig.plan}`)
         console.log(`   - Créditos: ${planConfig.credits === -1 ? 'ilimitado' : planConfig.credits}`)
+        console.log(`   - Processado em: ${result.processed_at}`)
+
+        // ⚡ ADICIONAL: Notificar via realtime que houve mudança
+        try {
+          const { error: realtimeError } = await supabaseAdmin
+            .from('users')
+            .update({ 
+              last_webhook_update: new Date().toISOString(),
+              webhook_session_id: session.id 
+            })
+            .eq('id', result.user_id)
+          
+          if (realtimeError) {
+            console.warn('⚠️ [WEBHOOK] Aviso: Erro ao atualizar realtime:', realtimeError)
+          } else {
+            console.log('⚡ [WEBHOOK] Realtime atualizado com sucesso')
+          }
+        } catch (realtimeErr) {
+          console.warn('⚠️ [WEBHOOK] Aviso: Erro no realtime:', realtimeErr)
+        }
 
       } catch (error) {
         console.error('❌ [WEBHOOK] Erro inesperado:', error)
