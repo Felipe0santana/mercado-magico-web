@@ -17,90 +17,13 @@ export async function POST(request: NextRequest) {
     const normalizedEmail = email.trim().toLowerCase()
     const userFullName = fullName || email.split('@')[0]
 
-    // ✨ PRIMEIRA TENTATIVA: Usar client-side signup
-    console.log(`📝 [REGISTER] Tentativa 1: Usando método client-side para ${normalizedEmail}`)
-    
-    try {
-      const { data, error } = await supabase.auth.signUp({
-        email: normalizedEmail,
-        password: password,
-        options: {
-          data: {
-            full_name: userFullName,
-            subscription_plan: 'free',
-            subscription_status: 'active',
-            credits_remaining: 10,
-            total_credits_purchased: 0,
-            created_via: 'api_register',
-            created_at: new Date().toISOString()
-          }
-        }
-      })
-
-      if (!error && data.user) {
-        console.log('✅ [REGISTER] Usuário criado com sucesso via client-side! ID:', data.user.id)
-        
-        // Tentar inserir na tabela public.users também
-        try {
-          const { error: insertError } = await supabase
-            .from('users')
-            .insert([{
-              id: data.user.id,
-              email: data.user.email,
-              name: userFullName,
-              subscription_plan: 'free',
-              subscription_status: 'active',
-              credits_remaining: 10,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString()
-            }])
-          
-          if (insertError) {
-            console.warn('⚠️ [REGISTER] Aviso: Erro ao inserir em public.users:', insertError)
-          } else {
-            console.log('✅ [REGISTER] Usuário também inserido em public.users')
-          }
-        } catch (publicError) {
-          console.warn('⚠️ [REGISTER] Aviso: Erro na inserção public.users:', publicError)
-        }
-        
-        return NextResponse.json({ 
-          success: true, 
-          message: data.user.email_confirmed_at 
-            ? 'Conta criada com sucesso! Você já pode fazer login.'
-            : 'Conta criada! Verifique seu email para confirmar.',
-          user: {
-            id: data.user.id,
-            email: data.user.email,
-            full_name: data.user.user_metadata?.full_name,
-            email_confirmed: !!data.user.email_confirmed_at,
-            needs_confirmation: !data.user.email_confirmed_at
-          }
-        })
-      }
-
-      // Se chegou aqui, houve erro na primeira tentativa
-      console.warn('⚠️ [REGISTER] Primeira tentativa falhou:', error?.message)
-      
-      // Tratar erros específicos
-      if (error?.message?.includes('already registered')) {
-        return NextResponse.json({ 
-          success: false, 
-          error: 'Este email já está em uso' 
-        }, { status: 400 })
-      }
-      
-    } catch (clientError) {
-      console.warn('⚠️ [REGISTER] Erro na tentativa client-side:', clientError)
-    }
-
-    // ✨ SEGUNDA TENTATIVA: Criar registro temporário e usar migração
-    console.log(`🔧 [REGISTER] Tentativa 2: Registro temporário para ${normalizedEmail}`)
+    // ✨ REGISTRO TEMPORÁRIO (método principal enquanto API admin está instável)
+    console.log(`🔧 [REGISTER] Criando registro temporário para ${normalizedEmail}`)
     
     try {
       // Verificar se já existe
       const { data: existingUser, error: checkError } = await supabase
-        .from('users')
+        .from('temp_registrations')
         .select('email')
         .eq('email', normalizedEmail)
         .maybeSingle()
@@ -112,7 +35,16 @@ export async function POST(request: NextRequest) {
         }, { status: 400 })
       }
 
-      // Criar registro temporário (será migrado depois)
+      // Verificar também se já existe em auth.users
+      const { data: authUsers, error: authError } = await supabase.auth.admin.listUsers()
+      if (authUsers?.users?.some(user => user.email === normalizedEmail)) {
+        return NextResponse.json({ 
+          success: false, 
+          error: 'Este email já está em uso' 
+        }, { status: 400 })
+      }
+
+      // Criar registro temporário
       const tempId = crypto.randomUUID()
       const { data: tempUser, error: tempError } = await supabase
         .from('temp_registrations')
@@ -127,58 +59,51 @@ export async function POST(request: NextRequest) {
 
       if (tempError) {
         console.error('❌ [REGISTER] Erro ao criar registro temporário:', tempError)
-        throw tempError
+        return NextResponse.json({ 
+          success: false, 
+          error: 'Erro ao criar conta. Tente novamente.' 
+        }, { status: 500 })
       }
 
-      console.log('✅ [REGISTER] Registro temporário criado, iniciando migração...')
+      console.log('✅ [REGISTER] Registro temporário criado com sucesso!')
 
-      // Tentar migrar imediatamente
-      try {
-        const migrateResponse = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL || 'https://site54874935.netlify.app'}/api/migrate-temp-user`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tempId })
-        })
-
-        const migrateResult = await migrateResponse.json()
-        
-        if (migrateResult.success) {
-          console.log('✅ [REGISTER] Usuário migrado com sucesso!')
-          return NextResponse.json({
-            success: true,
-            message: 'Conta criada com sucesso! Você já pode fazer login.',
-            user: migrateResult.user
+      // Tentar migrar imediatamente em background
+      setTimeout(async () => {
+        try {
+          console.log('🔄 [REGISTER] Tentando migração automática...')
+          const migrateResponse = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL || 'https://site54874935.netlify.app'}/api/migrate-temp-user`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tempId })
           })
-        } else {
-          console.warn('⚠️ [REGISTER] Migração falhou, mas registro temporário foi criado')
+          
+          const migrateResult = await migrateResponse.json()
+          console.log('🔄 [REGISTER] Resultado da migração automática:', migrateResult.success ? 'Sucesso' : 'Falha')
+        } catch (migrateError) {
+          console.warn('⚠️ [REGISTER] Erro na migração automática:', migrateError)
         }
-      } catch (migrateError) {
-        console.warn('⚠️ [REGISTER] Erro na migração:', migrateError)
-      }
+      }, 2000) // Aguardar 2 segundos antes de tentar migrar
 
-      // Se chegou aqui, o registro temporário foi criado mas a migração falhou
       return NextResponse.json({
         success: true,
-        message: 'Conta criada! Pode levar alguns minutos para ficar disponível para login.',
+        message: 'Conta criada com sucesso! Aguarde alguns segundos e tente fazer login.',
         user: {
           email: normalizedEmail,
           full_name: userFullName,
-          status: 'pending_migration'
+          status: 'processing',
+          temp_id: tempId
         },
-        note: 'Usuário será migrado automaticamente em breve'
+        note: 'Sua conta está sendo processada. Tente fazer login em alguns segundos.'
       })
 
     } catch (tempError) {
       console.error('❌ [REGISTER] Erro no registro temporário:', tempError)
+      return NextResponse.json({ 
+        success: false, 
+        error: 'Erro ao criar conta. Tente novamente em alguns minutos.',
+        details: tempError instanceof Error ? tempError.message : 'Erro desconhecido'
+      }, { status: 500 })
     }
-
-    // ✨ Se chegou aqui, todas as tentativas falharam
-    console.error('❌ [REGISTER] Todas as tentativas de registro falharam para:', normalizedEmail)
-    return NextResponse.json({ 
-      success: false, 
-      error: 'Erro ao criar conta. O serviço está temporariamente indisponível. Tente novamente em alguns minutos.',
-      details: 'Falha em todos os métodos de registro'
-    }, { status: 500 })
 
   } catch (error) {
     console.error('❌ [REGISTER] Erro inesperado:', error)
@@ -191,13 +116,29 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET() {
-  return NextResponse.json({ 
-    message: 'API de registro de usuário',
-    status: 'ativa',
-    methods: [
-      'Supabase Auth Client-Side (Primário)',
-      'Registro Temporário + Migração (Fallback)'
-    ],
-    note: 'Sistema robusto com múltiplas tentativas de registro'
-  })
+  try {
+    // Verificar status dos registros temporários
+    const { data: stats, error } = await supabase
+      .from('temp_registrations')
+      .select('status')
+
+    const statusCount = stats?.reduce((acc, item) => {
+      acc[item.status] = (acc[item.status] || 0) + 1
+      return acc
+    }, {} as Record<string, number>) || {}
+
+    return NextResponse.json({ 
+      message: 'API de registro de usuário',
+      status: 'ativa',
+      method: 'Registro Temporário + Migração Automática',
+      note: 'Sistema simplificado devido a instabilidade da API admin do Supabase',
+      temp_registrations_stats: statusCount
+    })
+  } catch (error) {
+    return NextResponse.json({ 
+      message: 'API de registro de usuário',
+      status: 'ativa',
+      error: 'Erro ao buscar estatísticas'
+    })
+  }
 } 
